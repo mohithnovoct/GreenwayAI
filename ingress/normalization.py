@@ -27,28 +27,28 @@ def _sanitize_line(value: str) -> str:
     return re.sub(r"[ \t]+", " ", value.strip())
 
 
-def _clean_content(value: Any) -> Any:
+def _clean_content(value: Any, *, text_value: bool = False) -> Any:
     if isinstance(value, str):
-        return sanitize(value)
+        return sanitize(value) if text_value else value
     if isinstance(value, list):
         return [_clean_content(part) for part in value]
     if isinstance(value, dict):
         # Placeholder recursion until multimodal support is scoped in a later phase.
         return {
-            key: sanitize(part) if key == "text" and isinstance(part, str) else _clean_content(part)
+            key: _clean_content(part, text_value=key == "text")
             for key, part in value.items()
         }
     return value
 
 
-def _canonical_content(value: Any) -> Any:
+def _canonical_content(value: Any, *, text_value: bool = False) -> Any:
     if isinstance(value, str):
-        return canonicalize(value)
+        return canonicalize(value) if text_value else value
     if isinstance(value, list):
         return [_canonical_content(part) for part in value]
     if isinstance(value, dict):
         return {
-            key: canonicalize(part) if key == "text" and isinstance(part, str) else _canonical_content(part)
+            key: _canonical_content(part, text_value=key == "text")
             for key, part in value.items()
         }
     return value
@@ -60,7 +60,7 @@ def normalize_payload(payload: dict[str, Any]) -> dict[str, Any]:
         {
             **message,
             "role": _sanitize_line(str(message.get("role", ""))).lower(),
-            "content": _clean_content(message.get("content", "")),
+            "content": _clean_content(message.get("content", ""), text_value=True),
         }
         for message in normalized.get("messages", [])
     ]
@@ -74,8 +74,10 @@ def prompt_text(payload: dict[str, Any]) -> str:
     parts = []
     for message in payload.get("messages", []):
         content = message.get("content", "")
-        rendered = content if isinstance(content, str) else json.dumps(_canonical_content(content), sort_keys=True)
-        parts.append(f"{message.get('role', '')}: {canonicalize(rendered)}")
+        rendered = canonicalize(content) if isinstance(content, str) else json.dumps(
+            _canonical_content(content), sort_keys=True, separators=(",", ":")
+        )
+        parts.append(f"{message.get('role', '')}: {rendered}")
     return "\n".join(parts)
 
 

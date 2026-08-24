@@ -46,3 +46,12 @@ def test_multimodal_text_parts_are_sanitized_recursively():
     assert normalized["messages"][0]["content"][0]["text"] == "hello world \n\nfoo"
     assert normalized["messages"][0]["content"][1] == {"type": "image_url", "image_url": {"url": "..."}}
     assert build_gateway_request(first, None).content_hash == build_gateway_request(second, None).content_hash
+
+
+def test_non_text_multimodal_strings_are_unchanged():
+    url = "https://x.com/i.png?a=1   b=2"
+    normalized = normalize_payload({
+        "messages": [{"role": "user", "content": [{"type": "image_url", "image_url": {"url": url}}]}],
+    })
+
+    assert normalized["messages"][0]["content"][0]["image_url"]["url"] == url

@@ -1,11 +1,12 @@
 import json
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 import logging
 import os
 import time
 import uuid
 from contextlib import asynccontextmanager
-from typing import AsyncIterator
+from typing import Any, AsyncIterator
 
 import httpx
 from fastapi import FastAPI, Header, Request
@@ -19,11 +20,17 @@ logger = logging.getLogger("greenwayai.ingress")
 
 @asynccontextmanager
 async def lifespan(application: FastAPI) -> AsyncIterator[None]:
-    application.state.http_client = httpx.AsyncClient(timeout=120.0)
+    application.state.executor = ThreadPoolExecutor(max_workers=50, thread_name_prefix="greenway-ingress")
+    asyncio.get_running_loop().set_default_executor(application.state.executor)
+    application.state.http_client = httpx.AsyncClient(
+        timeout=120.0,
+        limits=httpx.Limits(max_keepalive_connections=100, max_connections=100),
+    )
     try:
         yield
     finally:
         await application.state.http_client.aclose()
+        application.state.executor.shutdown(wait=True)
 
 
 app = FastAPI(title="GreenwayAI Gateway", version="0.2.0", lifespan=lifespan)
@@ -55,15 +62,33 @@ async def chat_completions(
     }
     backend_url = os.getenv("VLLM_BACKEND_URL", "").strip().rstrip("/")
     proxy_started = time.perf_counter()
+    pool_acquire_ms = 0.0
+    round_trip_ms = 0.0
+    response_read_ms = 0.0
     try:
         if not backend_url:
             response = JSONResponse(mock_response(gateway_request.raw_payload), headers=metadata)
         else:
-            backend_response = await request.app.state.http_client.post(
+            trace_started = time.perf_counter()
+
+            async def trace(name: str, info: dict[str, Any]) -> None:
+                nonlocal pool_acquire_ms
+                if name == "connection_acquired":
+                    pool_acquire_ms = (time.perf_counter() - trace_started) * 1000
+
+            backend_request = request.app.state.http_client.build_request(
+                "POST",
                 f"{backend_url}/v1/chat/completions",
                 json=gateway_request.raw_payload,
                 headers={**metadata, "Content-Type": "application/json"},
             )
+            backend_request.extensions["trace"] = trace
+            backend_response = await request.app.state.http_client.send(backend_request, stream=True)
+            round_trip_ms = (time.perf_counter() - trace_started) * 1000 - pool_acquire_ms
+            response_body_started = time.perf_counter()
+            response_body = await backend_response.aread()
+            response_read_ms = (time.perf_counter() - response_body_started) * 1000
+            await backend_response.aclose()
             response_headers = {
                 key: value
                 for key, value in backend_response.headers.items()
@@ -71,7 +96,7 @@ async def chat_completions(
             }
             response_headers.update(metadata)
             response = Response(
-                content=backend_response.content,
+                content=response_body,
                 status_code=backend_response.status_code,
                 headers=response_headers,
             )
@@ -84,6 +109,9 @@ async def chat_completions(
         "input_tokens": gateway_request.input_tokens,
         "normalization_ms": round(normalization_ms, 3),
         "proxy_ms": round(proxy_ms, 3),
+        "pool_acquire_ms": round(pool_acquire_ms, 3),
+        "round_trip_ms": round(round_trip_ms, 3),
+        "response_read_ms": round(response_read_ms, 3),
         "latency_ms": round((time.perf_counter() - started) * 1000, 3),
     }))
     return response
