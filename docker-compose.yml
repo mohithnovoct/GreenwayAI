@@ -6,11 +6,28 @@ services:
     env_file:
       - path: .env
         required: false
+    environment:
+      VLLM_BACKEND_URL: ${VLLM_BACKEND_URL:-http://mock-backend:8001}
     ports:
       - "8000:8000"
     depends_on:
       redis:
         condition: service_healthy
+      mock-backend:
+        condition: service_healthy
+
+  mock-backend:
+    build:
+      context: .
+      dockerfile: ingress/Dockerfile
+    command: ["uvicorn", "ingress.mock_backend:app", "--host", "0.0.0.0", "--port", "8001"]
+    ports:
+      - "8001:8001"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
 
   redis:
     image: redis:7-alpine

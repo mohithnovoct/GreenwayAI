@@ -1,6 +1,8 @@
 import hashlib
 import json
+import re
 import uuid
+from functools import lru_cache
 from typing import Any
 
 import tiktoken
@@ -10,17 +12,45 @@ from shared.schema import GatewayRequest, SLAClass
 DEFAULT_TEMPERATURE = 1.0
 DEFAULT_TOP_P = 1.0
 DEFAULT_MAX_TOKENS = 256
+DEFAULT_ENCODING = tiktoken.get_encoding("cl100k_base")
 
 
-def _clean_text(value: str) -> str:
+def canonicalize(value: str) -> str:
     return " ".join(value.split())
+
+
+def sanitize(value: str) -> str:
+    return "\n".join(re.sub(r"[ \t]+", " ", line) for line in value.strip().split("\n"))
+
+
+def _sanitize_line(value: str) -> str:
+    return re.sub(r"[ \t]+", " ", value.strip())
 
 
 def _clean_content(value: Any) -> Any:
     if isinstance(value, str):
-        return _clean_text(value)
+        return sanitize(value)
     if isinstance(value, list):
         return [_clean_content(part) for part in value]
+    if isinstance(value, dict):
+        # Placeholder recursion until multimodal support is scoped in a later phase.
+        return {
+            key: sanitize(part) if key == "text" and isinstance(part, str) else _clean_content(part)
+            for key, part in value.items()
+        }
+    return value
+
+
+def _canonical_content(value: Any) -> Any:
+    if isinstance(value, str):
+        return canonicalize(value)
+    if isinstance(value, list):
+        return [_canonical_content(part) for part in value]
+    if isinstance(value, dict):
+        return {
+            key: canonicalize(part) if key == "text" and isinstance(part, str) else _canonical_content(part)
+            for key, part in value.items()
+        }
     return value
 
 
@@ -29,7 +59,7 @@ def normalize_payload(payload: dict[str, Any]) -> dict[str, Any]:
     normalized["messages"] = [
         {
             **message,
-            "role": _clean_text(str(message.get("role", ""))).lower(),
+            "role": _sanitize_line(str(message.get("role", ""))).lower(),
             "content": _clean_content(message.get("content", "")),
         }
         for message in normalized.get("messages", [])
@@ -44,24 +74,28 @@ def prompt_text(payload: dict[str, Any]) -> str:
     parts = []
     for message in payload.get("messages", []):
         content = message.get("content", "")
-        rendered = content if isinstance(content, str) else json.dumps(content, sort_keys=True)
-        parts.append(f"{message.get('role', '')}: {rendered}")
+        rendered = content if isinstance(content, str) else json.dumps(_canonical_content(content), sort_keys=True)
+        parts.append(f"{message.get('role', '')}: {canonicalize(rendered)}")
     return "\n".join(parts)
 
 
-def count_tokens(text: str, model: str) -> int:
+@lru_cache(maxsize=64)
+def _encoding_for_model(model: str) -> Any:
     try:
-        encoding = tiktoken.encoding_for_model(model)
+        return tiktoken.encoding_for_model(model)
     except KeyError:
-        encoding = tiktoken.get_encoding("cl100k_base")
-    return len(encoding.encode(text))
+        return DEFAULT_ENCODING
+
+
+def count_tokens(text: str, model: str) -> int:
+    return len(_encoding_for_model(model).encode(text))
 
 
 def build_gateway_request(payload: dict[str, Any], sla_header: str | None) -> GatewayRequest:
     normalized = normalize_payload(payload)
     prompt = prompt_text(normalized)
     return GatewayRequest(
-        request_id=uuid.uuid4().hex,
+        request_id=str(uuid.uuid4()),
         raw_payload=normalized,
         normalized_prompt=prompt,
         content_hash=hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
