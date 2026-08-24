@@ -1,0 +1,1 @@
+"""Shared contracts used across GreenwayAI services."""
