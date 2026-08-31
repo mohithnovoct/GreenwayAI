@@ -2,6 +2,7 @@
 
 import argparse
 import asyncio
+import os
 import statistics
 import time
 
@@ -39,9 +40,30 @@ def percentile(values: list[float], fraction: float) -> float:
     return sorted(values)[min(int(len(values) * fraction), len(values) - 1)]
 
 
+def resource_state() -> tuple[float, float | None]:
+    load_average = os.getloadavg()[0]
+    available_memory_mib = None
+    try:
+        with open("/proc/meminfo", encoding="utf-8") as meminfo:
+            values = dict(line.split(":", 1) for line in meminfo if ":" in line)
+        available_memory_kib = values.get("MemAvailable", "").split()[0]
+        available_memory_mib = float(available_memory_kib) / 1024.0
+    except (OSError, ValueError, IndexError):
+        pass
+    return load_average, available_memory_mib
+
+
+def print_resource_state(label: str) -> None:
+    load_average, available_memory_mib = resource_state()
+    memory = f"{available_memory_mib:.1f} MiB" if available_memory_mib is not None else "unknown"
+    print(f"resource {label}: load_avg_1m={load_average:.2f} available_memory={memory}")
+
+
 async def main(args: argparse.Namespace) -> None:
+    print_resource_state("before")
     async with httpx.AsyncClient(timeout=30.0) as client:
         backend, gateway = await measure_pair(client, args.gateway, args.backend, args.requests, args.concurrency)
+    print_resource_state("after")
     print("path       p50_ms   p95_ms   p99_ms")
     for name, values in (("gateway", gateway), ("backend", backend)):
         print(f"{name:<10} {statistics.median(values):7.2f} {percentile(values, .95):8.2f} {percentile(values, .99):8.2f}")

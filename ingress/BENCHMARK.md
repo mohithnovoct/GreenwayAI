@@ -26,6 +26,12 @@ The default Compose stack provides an independent mock backend on port 8001,
 so this measures a real direct HTTP path rather than comparing two calls to the
 gateway's internal fallback.
 
+Hardware-backed NVML validation requires a real NVIDIA GPU deployment target.
+This dev/CI environment is GPU-less, so `nvml_sampler.py` intentionally uses
+`mock_nvml` mode with a clearly-labeled `telemetry_source` field whenever the
+NVML library is unavailable. Treat all such figures as synthetic baseline data
+only, never as hardware-measured GPU consumption.
+
 Both `gateway` and `mock-backend` are attached to the auto-created
 `greenwayai_default` Docker bridge. The gateway reaches `mock-backend:8001` via
 container DNS. Earlier results used a `--network host` benchmark client and
@@ -87,6 +93,40 @@ smaller response-read cost. The executor and network corrections reduce the
 ms; the remaining difference is a genuine application/proxy cost in this
 two-CPU container, not the earlier network artifact alone.
 
+## Known Limitation: Benchmark Reproducibility
+
+The 2026-08-31 reproduction of the same 1000-request/concurrency-50 command,
+with the default NVML/mock path, gateway pool defaults (100 connections and a
+50-worker executor), and the four-worker no-delay mock backend, produced:
+
+```text
+path       p50_ms   p95_ms   p99_ms
+gateway     359.18  1059.24  1506.90
+backend      97.53   430.96   534.85
+gateway tax p50/p95/p99: 265.35/1027.62/1479.59 ms
+```
+
+The corresponding raw gateway breakdown was normalization `16.497/44.934 ms`,
+pool acquire `0.000/3.959 ms`, HTTP round trip `93.337/814.780 ms`, response
+read `9.830/39.865 ms`, and proxy total `142.721/848.171 ms` at p50/p95.
+Before the run, the container reported 2 CPUs, load average `1.34`, 5.4 GiB
+of 7.8 GiB memory in use, and no running Docker containers or leftover
+Uvicorn/benchmark processes. VS Code/Pylance services were active. Immediately
+afterward, load was `1.13`, memory use was 5.6 GiB, and 161 MiB was free.
+
+These measurements are materially slower than the 2026-08-24 baseline across
+normalization, backend round trip, response read, and proxy total, while pool
+acquisition remains near zero. The container's absolute gateway-tax numbers
+are therefore not stable across sessions and must not be compared with an old
+baseline without re-establishing a fresh baseline under the same host load.
+
+The Phase 1/2 acceptance target is currently absolute latency based. As a
+follow-up for Phase 2 Task 8's verification loop, consider adding a relative
+criterion such as a bounded gateway-to-backend round-trip ratio or a maximum
+gateway-tax percentage. Relative measurements may be more robust to shared-host
+noise because both paths experience the same host pressure. This is a future
+verification improvement, not a replacement implemented in this phase.
+
 ## Phase target
 
 Microsecond overhead is a reasonable aspiration for compiled Go/Rust proxies,
@@ -96,7 +136,18 @@ ms on the documented two-CPU mock baseline, with no multi-second event-loop
 queueing. Further optimization should be justified against a real vLLM backend,
 not chased indefinitely against a compiled-proxy target.
 
-**Conclusion:** The gateway-tax target is met at both tested loads: p50 tax is
-17.48/36.13 ms and p95 tax is 157.92/179.36 ms for 200/20 and 1000/50,
-respectively. Absolute gateway latency exceeds 200 ms at p95, but that is a
-different metric and does not constitute a miss against this phase's target.
+**Conclusion:** The original 2026-08-24 measurements met the gateway-tax target
+at both tested loads: p50 tax was 17.48/36.13 ms and p95 tax was 157.92/179.36
+ms for 200/20 and 1000/50, respectively, under the documented low-contention
+conditions. Those results remain legitimate measurements from that run.
+
+The 2026-08-31 reproduction did not meet the target: p50/p95 tax was
+265.35/1027.62 ms under documented host memory pressure, with available memory
+falling to 161 MiB. The identical slowdown pattern in both NVML/mock and
+parametric modes attributes that result to host resource contention rather than
+a code-level gateway regression.
+
+As of this document's most recent update, the target has not been re-confirmed
+as consistently met. It must be re-measured under controlled, low-contention
+conditions before being cited as a passing result in the Phase 0/1 development
+report or in future phase documentation.

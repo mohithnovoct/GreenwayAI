@@ -15,4 +15,8 @@ class GatewayRequest(BaseModel):
     normalized_prompt: str | None = None
     content_hash: str | None = None
     input_tokens: int | None = None
+    output_tokens: int | None = None
+    energy_kwh: float | None = None
+    carbon_gco2e: float | None = None
+    telemetry_tier: str | None = None
     sla_class: SLAClass = SLAClass.INTERACTIVE

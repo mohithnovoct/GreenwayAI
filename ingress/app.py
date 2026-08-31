@@ -12,8 +12,12 @@ import httpx
 from fastapi import FastAPI, Header, Request
 from fastapi.responses import JSONResponse, Response
 
+from carbon.carbon_engine import CarbonEngine
 from ingress.mock_backend import mock_response
-from ingress.normalization import build_gateway_request
+from ingress.normalization import build_gateway_request, count_tokens
+from telemetry.energy_model import estimate_energy_kwh
+from telemetry.nvml_sampler import NVMLPowerSampler
+from telemetry.parametric import ParametricEnergyEstimator
 
 logging.basicConfig(format="%(message)s", level=logging.INFO)
 logger = logging.getLogger("greenwayai.ingress")
@@ -24,16 +28,32 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     asyncio.get_running_loop().set_default_executor(application.state.executor)
     application.state.http_client = httpx.AsyncClient(
         timeout=120.0,
-        limits=httpx.Limits(max_keepalive_connections=100, max_connections=100),
+        limits=httpx.Limits(
+            max_keepalive_connections=int(os.getenv("GREENWAY_MAX_KEEPALIVE_CONNECTIONS", "100")),
+            max_connections=int(os.getenv("GREENWAY_MAX_CONNECTIONS", "100")),
+        ),
     )
+    application.state.nvml_sampler = NVMLPowerSampler()
+    application.state.nvml_sampler.start()
+    application.state.parametric_estimator = ParametricEnergyEstimator()
+    application.state.carbon_engine = CarbonEngine(region=os.getenv("GREENWAY_REGION", "us-east1"), provider=os.getenv("GREENWAY_PROVIDER", "google"))
     try:
         yield
     finally:
+        application.state.nvml_sampler.stop()
         await application.state.http_client.aclose()
         application.state.executor.shutdown(wait=True)
 
 
 app = FastAPI(title="GreenwayAI Gateway", version="0.2.0", lifespan=lifespan)
+
+
+def request_energy_window_start(trace_started: float, pool_acquire_ms: float) -> float:
+    return trace_started + (pool_acquire_ms / 1000.0)
+
+
+def request_energy_window_end(trace_started: float, pool_acquire_ms: float, round_trip_ms: float) -> float:
+    return trace_started + ((pool_acquire_ms + round_trip_ms) / 1000.0)
 
 
 @app.get("/health")
@@ -65,17 +85,40 @@ async def chat_completions(
     pool_acquire_ms = 0.0
     round_trip_ms = 0.0
     response_read_ms = 0.0
+    output_tokens = 0
+    energy_kwh = 0.0
+    carbon_gco2e = 0.0
+    hardware_energy_kwh = 0.0
+    energy_source_tier: str | None = None
+    response_payload: dict[str, Any] = {}
+    sampler = getattr(request.app.state, "nvml_sampler", None)
+    parametric_estimator = getattr(request.app.state, "parametric_estimator", None)
+    parametric_mode = os.getenv("GREENWAY_ENERGY_MODE", "nvml").strip().lower() == "parametric"
+    telemetry_source = "unknown"
+    if parametric_mode:
+        telemetry_source = "parametric_estimated"
+    elif sampler is not None:
+        telemetry_source = sampler.telemetry_source
     try:
         if not backend_url:
-            response = JSONResponse(mock_response(gateway_request.raw_payload), headers=metadata)
+            response_payload = mock_response(gateway_request.raw_payload)
+            response = JSONResponse(response_payload, headers=metadata)
         else:
             trace_started = time.perf_counter()
 
             async def trace(name: str, info: dict[str, Any]) -> None:
                 nonlocal pool_acquire_ms
-                if name == "connection_acquired":
+                if name == "connection.connect_tcp.started":
                     pool_acquire_ms = (time.perf_counter() - trace_started) * 1000
+                    if sampler is not None:
+                        sampler.register_request(
+                            gateway_request.request_id,
+                            start_ts=request_energy_window_start(trace_started, pool_acquire_ms),
+                            end_ts=trace_started,
+                        )
 
+            if sampler is not None and not parametric_mode:
+                sampler.register_request(gateway_request.request_id, start_ts=trace_started, end_ts=trace_started)
             backend_request = request.app.state.http_client.build_request(
                 "POST",
                 f"{backend_url}/v1/chat/completions",
@@ -89,12 +132,19 @@ async def chat_completions(
             response_body = await backend_response.aread()
             response_read_ms = (time.perf_counter() - response_body_started) * 1000
             await backend_response.aclose()
+            if sampler is not None and not parametric_mode:
+                sampler.complete_request(
+                    gateway_request.request_id,
+                    end_ts=request_energy_window_end(trace_started, pool_acquire_ms, round_trip_ms),
+                )
+                hardware_energy_kwh = sampler.estimate_request_energy_kwh(gateway_request.request_id)
             response_headers = {
                 key: value
                 for key, value in backend_response.headers.items()
                 if key.lower() not in {"content-length", "transfer-encoding", "connection"}
             }
             response_headers.update(metadata)
+            response_payload = json.loads(response_body.decode("utf-8")) if response_body else {}
             response = Response(
                 content=response_body,
                 status_code=backend_response.status_code,
@@ -102,16 +152,65 @@ async def chat_completions(
             )
     except httpx.HTTPError as error:
         response = JSONResponse({"error": {"message": f"Backend unavailable: {error}"}}, status_code=502, headers=metadata)
+
+    def _count_response_tokens(payload: dict[str, Any]) -> int:
+        choices = payload.get("choices", [])
+        if not choices:
+            return 0
+        message = choices[0].get("message", {})
+        content = message.get("content", "")
+        if isinstance(content, str):
+            return count_tokens(content, str(gateway_request.raw_payload.get("model", "gpt-3.5-turbo")))
+        if isinstance(content, list):
+            texts: list[str] = []
+            for part in content:
+                if isinstance(part, dict):
+                    text = part.get("text")
+                    if isinstance(text, str):
+                        texts.append(text)
+            return count_tokens("\n".join(texts), str(gateway_request.raw_payload.get("model", "gpt-3.5-turbo")))
+        return 0
+
+    if response_payload:
+        output_tokens = await asyncio.to_thread(_count_response_tokens, response_payload)
+        if parametric_mode and parametric_estimator is not None:
+            estimate = parametric_estimator.estimate(
+                model=str(gateway_request.raw_payload.get("model", "unknown")),
+                input_tokens=gateway_request.input_tokens or 0,
+                output_tokens=output_tokens,
+            )
+            energy_kwh = estimate.energy_kwh
+            energy_source_tier = estimate.energy_source_tier
+        else:
+            energy_kwh = estimate_energy_kwh(
+                input_tokens=gateway_request.input_tokens or 0,
+                output_tokens=output_tokens,
+            ) + hardware_energy_kwh
+        moer = await request.app.state.carbon_engine.fetch_moer_kg_per_kwh()
+        carbon_gco2e = request.app.state.carbon_engine.estimate_carbon_gco2e(energy_kwh=energy_kwh, moer_kg_per_kwh=moer)
+
+    response.headers["X-Greenway-Output-Tokens"] = str(output_tokens)
+    response.headers["X-Greenway-Energy-kWh"] = f"{energy_kwh:.12f}"
+    response.headers["X-Greenway-Hardware-Energy-kWh"] = f"{hardware_energy_kwh:.12f}"
+    response.headers["X-Greenway-Carbon-gCO2e"] = f"{carbon_gco2e:.12f}"
+    response.headers["X-Greenway-Telemetry-Tier"] = "nvml-sampled"
+    response.headers["X-Greenway-Telemetry-Source"] = telemetry_source
+    response.headers["X-Greenway-Energy-Source-Tier"] = energy_source_tier or "nvml"
     proxy_ms = (time.perf_counter() - proxy_started) * 1000
     logger.info(json.dumps({
         "request_id": gateway_request.request_id,
         "content_hash": gateway_request.content_hash,
         "input_tokens": gateway_request.input_tokens,
+        "output_tokens": output_tokens,
+        "energy_kwh": round(energy_kwh, 12),
+        "carbon_gco2e": round(carbon_gco2e, 12),
         "normalization_ms": round(normalization_ms, 3),
         "proxy_ms": round(proxy_ms, 3),
         "pool_acquire_ms": round(pool_acquire_ms, 3),
         "round_trip_ms": round(round_trip_ms, 3),
         "response_read_ms": round(response_read_ms, 3),
         "latency_ms": round((time.perf_counter() - started) * 1000, 3),
+        "telemetry_source": telemetry_source,
+        "energy_source_tier": energy_source_tier or "nvml",
     }))
     return response

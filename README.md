@@ -39,3 +39,9 @@ For local Python development, install [uv](https://docs.astral.sh/uv/) and run:
 uv sync
 uv run uvicorn ingress.app:app --reload
 ```
+
+## NVML and GPU requirements
+
+Hardware-backed NVML validation requires a deployment target with a real NVIDIA GPU and the corresponding `libnvidia-ml.so.1` runtime available in the container or host environment. This dev/CI environment does not provide that, so the project intentionally runs the sampler in `mock_nvml` mode in local and CI execution. The sampler logs a `telemetry_source` value so synthetic power data is never mistaken for real GPU-measured telemetry downstream.
+
+The benchmark and dashboard workflow should treat `mock_nvml` values as development-only placeholders until a real GPU target is available for hardware validation.

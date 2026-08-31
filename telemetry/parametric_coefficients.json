@@ -1,0 +1,20 @@
+{
+  "throughput_fallback": {
+    "prefill_kwh_per_input_token": 1.0e-7,
+    "decode_kwh_per_output_token": 2.0e-7
+  },
+  "models": {
+    "vendor-demo": {
+      "tier": "vendor",
+      "source": "Configured vendor-disclosed figure placeholder",
+      "prefill_kwh_per_input_token": 2.0e-7,
+      "decode_kwh_per_output_token": 5.0e-7
+    },
+    "lca-demo": {
+      "tier": "lca",
+      "source": "Documented LCA-derived estimate placeholder",
+      "prefill_kwh_per_input_token": 3.0e-7,
+      "decode_kwh_per_output_token": 7.0e-7
+    }
+  }
+}

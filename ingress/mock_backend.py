@@ -1,3 +1,5 @@
+import asyncio
+import os
 import time
 import uuid
 from typing import Any
@@ -27,4 +29,7 @@ def health() -> dict[str, str]:
 
 @app.post("/v1/chat/completions")
 async def chat_completions(payload: dict[str, Any]) -> dict[str, Any]:
+    delay_seconds = float(os.getenv("GREENWAY_MOCK_DELAY_SECONDS", "0"))
+    if delay_seconds > 0:
+        await asyncio.sleep(delay_seconds)
     return mock_response(payload)
