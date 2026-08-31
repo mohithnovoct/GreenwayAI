@@ -5,6 +5,8 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 
+from telemetry.energy_model import estimate_energy_kwh
+
 logger = logging.getLogger("greenwayai.telemetry")
 
 VALID_TIERS = {"vendor", "lca", "throughput_fallback"}
@@ -47,5 +49,12 @@ class ParametricEnergyEstimator:
             tier = str(configured["tier"])
             prefill_coeff, decode_coeff = self._validate_coefficients(configured, tier)
 
-        energy_kwh = (prefill_coeff * float(input_tokens)) + (decode_coeff * float(output_tokens))
+        # Any generated text, including reasoning output handled by a future backend,
+        # is counted in output_tokens and therefore consumes the decode term.
+        energy_kwh = estimate_energy_kwh(
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            prefill_coeff=prefill_coeff,
+            decode_coeff=decode_coeff,
+        )
         return ParametricEstimate(energy_kwh=energy_kwh, energy_source_tier=tier)

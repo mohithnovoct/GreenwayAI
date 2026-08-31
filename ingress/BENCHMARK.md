@@ -151,3 +151,77 @@ As of this document's most recent update, the target has not been re-confirmed
 as consistently met. It must be re-measured under controlled, low-contention
 conditions before being cited as a passing result in the Phase 0/1 development
 report or in future phase documentation.
+
+## Carbon Path Cost Analysis (Task 4)
+
+Task 4 added carbon-conversion logic to compute carbon_gco2e during request
+handling. To measure whether this added overhead materially impacts gateway
+latency, two A/B comparison methods were used:
+
+### Sequential A/B (2026-08-31, same session)
+
+Ran 1000 requests at concurrency 50 against two gateways: one with carbon
+enabled (A) and one with carbon disabled via `GREENWAY_CARBON_DISABLED=true`
+(B), back-to-back in the same session.
+
+**Important confound correction:** Run A executed first at load_avg=0.44 (fresh
+state); Run B executed second at load_avg=1.38 (elevated). Despite running
+under **worse** host conditions, Run B was **faster**, reversing the expected
+confound direction.
+
+```text
+Run A (enabled, fresh host)  : p50 tax 130.41 ms (load_avg started at 0.44)
+Run B (disabled, degraded)   : p50 tax 106.45 ms (load_avg started at 1.38)
+Difference                   : +23.96 ms (enabled slower despite better host)
+```
+
+The reversal indicates the ~24ms difference may reflect real overhead from the
+carbon path rather than a host-order artifact.
+
+### Interleaved A/B (2026-08-31, controlled for host drift)
+
+To eliminate host-order confounding, ran 10 rounds of alternating small batches
+(50 requests each, concurrency 10) between enabled and disabled gateways. Both
+arms were sampled throughout the same continuously drifting host conditions
+(load_avg from 1.09 to 2.48). Total 500 requests per arm.
+
+```text
+arm        p50_tax_ms  p95_tax_ms  p99_tax_ms  (500 requests per arm)
+enabled         71.69     148.61     185.15
+disabled        54.71     124.68     187.73
+```
+
+**Difference at p50: +16.98 ms** (enabled slower)
+
+Across all 10 rounds, enabled p50 ranged 57–92 ms, disabled ranged 43–66 ms.
+The consistent per-round gap strongly indicates the difference is real, not
+due to order-dependent host variations.
+
+### Conclusion
+
+The carbon-conversion logic adds a **measurable ~17–24 ms median latency cost**
+under the test conditions (static-fallback MOER tier, mock NVML, shared dev
+container). This overhead:
+
+- Is **not catastrophic** relative to overall gateway tax (p50 tax is 71.69 ms
+  with carbon, still within Phase 1 acceptance if host contention were resolved)
+- Is **consistent** across multiple sampling designs and host conditions
+- Is **modest relative to tail latency** (p95/p99 show much larger variance from
+  host pressure than from the carbon flag)
+
+The cost is attributed to the `await request.app.state.carbon_engine.get_moer_with_tier()`
+call in the request path. The implementation uses background cache refresh
+(started at app initialization) to avoid blocking on every request, but cache
+misses and lock contention during initial startup still incur per-request latency.
+
+### Recommendation
+
+No immediate optimization is required. The carbon path is:
+1. Functional and correctly computing carbon_gco2e values
+2. Integrated via background cache refresh to minimize blocking
+3. Short-circuitable via `GREENWAY_CARBON_DISABLED=true` for A/B validation
+
+If future phases require sub-15ms gateway tax under sustained load, the carbon
+lookup should be profiled for hot spots (cache-miss paths, lock wait times,
+async scheduling overhead). For now, accept the ~17ms baseline cost and
+document it in Phase 1 closure report.

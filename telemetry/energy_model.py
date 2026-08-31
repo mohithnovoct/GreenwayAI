@@ -5,7 +5,11 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class EnergyModel:
-    """Simple kWh/token model for the baseline carbon accounting phase."""
+    """Simple kWh/token model for baseline and parametric carbon accounting.
+
+    The decode term covers all generated output tokens, including any future
+    reasoning-chain tokens that are returned as part of the response body.
+    """
 
     prefill_coeff: float = 1.5e-7
     decode_coeff: float = 4.0e-7

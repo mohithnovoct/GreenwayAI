@@ -2,8 +2,10 @@ FROM python:3.11-slim
 
 WORKDIR /app
 COPY pyproject.toml README.md ./
+COPY carbon ./carbon
 COPY ingress ./ingress
 COPY shared ./shared
+COPY telemetry ./telemetry
 
 RUN pip install --no-cache-dir \
     "fastapi>=0.115,<1.0" \

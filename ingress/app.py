@@ -37,9 +37,12 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     application.state.nvml_sampler.start()
     application.state.parametric_estimator = ParametricEnergyEstimator()
     application.state.carbon_engine = CarbonEngine(region=os.getenv("GREENWAY_REGION", "us-east1"), provider=os.getenv("GREENWAY_PROVIDER", "google"))
+    application.state.carbon_moer_task = asyncio.create_task(application.state.carbon_engine.refresh_moer_cache())
     try:
         yield
     finally:
+        if not application.state.carbon_moer_task.done():
+            application.state.carbon_moer_task.cancel()
         application.state.nvml_sampler.stop()
         await application.state.http_client.aclose()
         application.state.executor.shutdown(wait=True)
@@ -88,6 +91,8 @@ async def chat_completions(
     output_tokens = 0
     energy_kwh = 0.0
     carbon_gco2e = 0.0
+    moer_kg_per_kwh = 0.0
+    carbon_source_tier = "static_fallback"
     hardware_energy_kwh = 0.0
     energy_source_tier: str | None = None
     response_payload: dict[str, Any] = {}
@@ -186,31 +191,29 @@ async def chat_completions(
                 input_tokens=gateway_request.input_tokens or 0,
                 output_tokens=output_tokens,
             ) + hardware_energy_kwh
-        moer = await request.app.state.carbon_engine.fetch_moer_kg_per_kwh()
-        carbon_gco2e = request.app.state.carbon_engine.estimate_carbon_gco2e(energy_kwh=energy_kwh, moer_kg_per_kwh=moer)
-
-    response.headers["X-Greenway-Output-Tokens"] = str(output_tokens)
-    response.headers["X-Greenway-Energy-kWh"] = f"{energy_kwh:.12f}"
-    response.headers["X-Greenway-Hardware-Energy-kWh"] = f"{hardware_energy_kwh:.12f}"
-    response.headers["X-Greenway-Carbon-gCO2e"] = f"{carbon_gco2e:.12f}"
-    response.headers["X-Greenway-Telemetry-Tier"] = "nvml-sampled"
-    response.headers["X-Greenway-Telemetry-Source"] = telemetry_source
-    response.headers["X-Greenway-Energy-Source-Tier"] = energy_source_tier or "nvml"
-    proxy_ms = (time.perf_counter() - proxy_started) * 1000
-    logger.info(json.dumps({
-        "request_id": gateway_request.request_id,
-        "content_hash": gateway_request.content_hash,
-        "input_tokens": gateway_request.input_tokens,
-        "output_tokens": output_tokens,
-        "energy_kwh": round(energy_kwh, 12),
-        "carbon_gco2e": round(carbon_gco2e, 12),
-        "normalization_ms": round(normalization_ms, 3),
-        "proxy_ms": round(proxy_ms, 3),
-        "pool_acquire_ms": round(pool_acquire_ms, 3),
-        "round_trip_ms": round(round_trip_ms, 3),
-        "response_read_ms": round(response_read_ms, 3),
-        "latency_ms": round((time.perf_counter() - started) * 1000, 3),
-        "telemetry_source": telemetry_source,
-        "energy_source_tier": energy_source_tier or "nvml",
-    }))
+            if os.getenv("GREENWAY_CARBON_DISABLED", "false").strip().lower() == "true":
+                moer_kg_per_kwh = request.app.state.carbon_engine._get_static_moer()
+                carbon_source_tier = "static_fallback"
+            else:
+                moer_kg_per_kwh, carbon_source_tier = await request.app.state.carbon_engine.get_moer_with_tier()
+        carbon_gco2e = request.app.state.carbon_engine.estimate_carbon_gco2e(
+            energy_kwh=energy_kwh,
+            moer_kg_per_kwh=moer_kg_per_kwh,
+        )
+        proxy_ms = (time.perf_counter() - proxy_started) * 1000
+        response.headers["X-Greenway-Output-Tokens"] = str(output_tokens)
+        response.headers["X-Greenway-Energy-kWh"] = str(round(energy_kwh, 12))
+        response.headers["X-Greenway-Carbon-gCO2e"] = str(round(carbon_gco2e, 12))
+        response.headers["X-Greenway-MOER-kgPerKWh"] = str(round(moer_kg_per_kwh, 12))
+        response.headers["X-Greenway-Carbon-Source"] = carbon_source_tier
+        response.headers["X-Greenway-Telemetry-Source"] = telemetry_source
+        response.headers["X-Greenway-Energy-Source"] = energy_source_tier or "nvml"
+        response.headers["X-Greenway-Normalization-ms"] = str(round(normalization_ms, 3))
+        response.headers["X-Greenway-Proxy-ms"] = str(round(proxy_ms, 3))
+        response.headers["X-Greenway-Pool-Acquire-ms"] = str(round(pool_acquire_ms, 3))
+        response.headers["X-Greenway-Round-Trip-ms"] = str(round(round_trip_ms, 3))
+        response.headers["X-Greenway-Response-Read-ms"] = str(round(response_read_ms, 3))
+        response.headers["X-Greenway-Latency-ms"] = str(round((time.perf_counter() - started) * 1000, 3))
+    else:
+        proxy_ms = (time.perf_counter() - proxy_started) * 1000
     return response
