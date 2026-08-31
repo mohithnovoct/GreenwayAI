@@ -222,10 +222,42 @@ No immediate optimization is required. The carbon path is:
 3. **Integrated via background cache refresh** to minimize request-path blocking
 4. **Short-circuitable via `GREENWAY_CARBON_DISABLED=true`** for A/B validation
 
-The implementation is ready for Phase 2 development and meets the standard for
-dev-environment task closure: correct logic, documented performance trade-off,
-and no unexpected surprises. Future production deployments should:
+This is ready for Phase 2 development closure in the current dev environment: it
+is correct, observed, and its cost is documented without claiming production
+readiness. Future deployments should:
 - Profile the hot paths (cache-miss, lock contention, async scheduling)
 - Re-measure with real Electricity Maps/WattTime credentials to quantify live-API overhead
 - Re-baseline against a real vLLM backend and GPU deployment
 - Decide whether the carbon cost is worth the carbon-awareness benefit in their specific context
+
+## Appendix: Raw interleaved A/B per-round evidence
+
+The interleaved benchmark alternated enabled and disabled batches in the same host
+session. Each round contained one 50-request enabled batch followed by one 50-request
+disabled batch, with resource readings captured immediately before each batch.
+
+| Round | Arm order | Resource state before enabled | Enabled p50 (ms) | Resource state before disabled | Disabled p50 (ms) |
+|---|---|---|---:|---|---:|
+| 1 | enabled → disabled | load_avg_1m=1.09, available_memory=2503.2 MiB | 115.22 | load_avg_1m=1.09, available_memory=2492.3 MiB | 54.67 |
+| 2 | enabled → disabled | load_avg_1m=1.64, available_memory=2499.6 MiB | 62.21 | load_avg_1m=1.64, available_memory=2497.4 MiB | 54.10 |
+| 3 | enabled → disabled | load_avg_1m=1.64, available_memory=2497.7 MiB | 66.19 | load_avg_1m=1.64, available_memory=2497.8 MiB | 57.53 |
+| 4 | enabled → disabled | load_avg_1m=1.64, available_memory=2499.9 MiB | 57.47 | load_avg_1m=1.64, available_memory=2499.7 MiB | 43.52 |
+| 5 | enabled → disabled | load_avg_1m=1.64, available_memory=2499.6 MiB | 62.61 | load_avg_1m=1.64, available_memory=2503.3 MiB | 58.81 |
+| 6 | enabled → disabled | load_avg_1m=1.83, available_memory=2544.1 MiB | 69.12 | load_avg_1m=1.83, available_memory=2540.5 MiB | 45.19 |
+| 7 | enabled → disabled | load_avg_1m=1.83, available_memory=2540.5 MiB | 66.55 | load_avg_1m=1.83, available_memory=2539.3 MiB | 62.22 |
+| 8 | enabled → disabled | load_avg_1m=1.83, available_memory=2537.4 MiB | 76.42 | load_avg_1m=1.83, available_memory=2541.7 MiB | 48.07 |
+| 9 | enabled → disabled | load_avg_1m=1.83, available_memory=2541.0 MiB | 71.02 | load_avg_1m=1.83, available_memory=2536.4 MiB | 66.82 |
+| 10 | enabled → disabled | load_avg_1m=1.83, available_memory=2512.8 MiB | 92.75 | load_avg_1m=2.48, available_memory=2638.0 MiB | 61.67 |
+
+Aggregate across all 10 rounds (500 requests per arm):
+
+```text
+arm        p50_tax_ms  p95_tax_ms  p99_tax_ms
+enabled         71.69     148.61     185.15
+disabled        54.71     124.68     187.73
+```
+
+The enabled arm remained slower at p50 across the interleaved design, with a
+measured +16.98 ms difference. This is the benchmark evidence used to close the
+Task 4 performance question in the current dev environment, without claiming a
+production deployment readiness or a full GPU-backed result set.

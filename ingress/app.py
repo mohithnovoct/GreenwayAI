@@ -214,6 +214,24 @@ async def chat_completions(
         response.headers["X-Greenway-Round-Trip-ms"] = str(round(round_trip_ms, 3))
         response.headers["X-Greenway-Response-Read-ms"] = str(round(response_read_ms, 3))
         response.headers["X-Greenway-Latency-ms"] = str(round((time.perf_counter() - started) * 1000, 3))
+        logger.info(json.dumps({
+            "request_id": gateway_request.request_id,
+            "content_hash": gateway_request.content_hash,
+            "input_tokens": gateway_request.input_tokens,
+            "output_tokens": output_tokens,
+            "energy_kwh": round(energy_kwh, 12),
+            "carbon_gco2e": round(carbon_gco2e, 12),
+            "moer_kg_per_kwh": round(moer_kg_per_kwh, 12),
+            "carbon_source_tier": carbon_source_tier,
+            "normalization_ms": round(normalization_ms, 3),
+            "proxy_ms": round(proxy_ms, 3),
+            "pool_acquire_ms": round(pool_acquire_ms, 3),
+            "round_trip_ms": round(round_trip_ms, 3),
+            "response_read_ms": round(response_read_ms, 3),
+            "latency_ms": round((time.perf_counter() - started) * 1000, 3),
+            "telemetry_source": telemetry_source,
+            "energy_source_tier": energy_source_tier or "nvml",
+        }))
     else:
         proxy_ms = (time.perf_counter() - proxy_started) * 1000
     return response
