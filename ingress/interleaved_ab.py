@@ -73,6 +73,7 @@ async def main(args: argparse.Namespace) -> None:
 
     enabled_batches: list[list[float]] = []
     disabled_batches: list[list[float]] = []
+    rows: list[tuple[int, str, str, float, str, float]] = []
 
     print(f"resource {format_resource_state('start')}")
     print()
@@ -80,24 +81,22 @@ async def main(args: argparse.Namespace) -> None:
     async with httpx.AsyncClient(timeout=30.0) as client:
         for round_idx in range(args.rounds):
             print(f"--- Round {round_idx + 1}/{args.rounds} ---")
-            
-            # Run enabled batch
-            print(f"resource {format_resource_state('before enabled')}")
-            _, enabled_taxes = await measure_batch(
-                client, args.enabled_gateway, args.backend, args.batch_size, args.concurrency
-            )
+            first_enabled = round_idx % 2 == 0
+            arm_order = "enabled -> disabled" if first_enabled else "disabled -> enabled"
+            batches: dict[str, list[float]] = {}
+            resources: dict[str, str] = {}
+            for arm in ("enabled", "disabled") if first_enabled else ("disabled", "enabled"):
+                resources[arm] = format_resource_state(f"before {arm}")
+                gateway = args.enabled_gateway if arm == "enabled" else args.disabled_gateway
+                _, taxes = await measure_batch(client, gateway, args.backend, args.batch_size, args.concurrency)
+                batches[arm] = taxes
+                print(f"resource {resources[arm]}")
+                print(f"  {arm} p50={statistics.median(taxes):.2f}ms (n={len(taxes)})")
+            enabled_taxes = batches["enabled"]
+            disabled_taxes = batches["disabled"]
             enabled_batches.append(enabled_taxes)
-            print(f"resource {format_resource_state('after enabled')}")
-            print(f"  enabled p50={statistics.median(enabled_taxes):.2f}ms (n={len(enabled_taxes)})")
-
-            # Run disabled batch
-            print(f"resource {format_resource_state('before disabled')}")
-            _, disabled_taxes = await measure_batch(
-                client, args.disabled_gateway, args.backend, args.batch_size, args.concurrency
-            )
             disabled_batches.append(disabled_taxes)
-            print(f"resource {format_resource_state('after disabled')}")
-            print(f"  disabled p50={statistics.median(disabled_taxes):.2f}ms (n={len(disabled_taxes)})")
+            rows.append((round_idx + 1, arm_order, resources["enabled"], statistics.median(enabled_taxes), resources["disabled"], statistics.median(disabled_taxes)))
             print()
 
     # Aggregate across all rounds
@@ -128,6 +127,11 @@ async def main(args: argparse.Namespace) -> None:
         print(f"→ Enabled is slower by {diff:.2f}ms (possible carbon path cost)")
     else:
         print(f"→ Disabled is slower by {abs(diff):.2f}ms (carbon path not a cause)")
+
+    print()
+    print("round | arm order             | before enabled | enabled p50 | before disabled | disabled p50")
+    for number, order, enabled_resource, enabled_p50, disabled_resource, disabled_p50 in rows:
+        print(f"{number:5d} | {order:<21} | {enabled_resource} | {enabled_p50:11.2f} | {disabled_resource} | {disabled_p50:12.2f}")
     
     print()
     print(f"resource {format_resource_state('end')}")

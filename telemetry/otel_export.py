@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
 
 from opentelemetry import metrics
@@ -13,7 +14,12 @@ logger = logging.getLogger("greenwayai.telemetry")
 
 def build_meter_provider() -> MeterProvider:
     resource = Resource.create({"service.name": "greenwayai"})
-    provider = MeterProvider(resource=resource)
+    from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
+
+    endpoint = os.getenv("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", "http://localhost:4318/v1/metrics")
+    exporter = OTLPMetricExporter(endpoint=endpoint)
+    reader = PeriodicExportingMetricReader(exporter, export_interval_millis=5000)
+    provider = MeterProvider(resource=resource, metric_readers=[reader])
     return provider
 
 
@@ -35,3 +41,16 @@ def register_baseline_metrics() -> dict[str, Any]:
     metrics_state["energy_saved"].add(0)
     metrics_state["carbon_avoided"].add(0)
     return metrics_state
+
+
+def record_request_metrics(metrics_state: dict[str, Any], *, energy_kwh: float | None, carbon_gco2e: float | None, telemetry_source: str, energy_source_tier: str, carbon_source_tier: str) -> None:
+    metrics_state["request_counter"].add(1, {"telemetry_source": telemetry_source})
+    attributes = {
+        "telemetry_source": telemetry_source,
+        "energy_source_tier": energy_source_tier,
+        "carbon_source_tier": carbon_source_tier,
+    }
+    if energy_kwh is not None:
+        metrics_state["energy_histogram"].record(energy_kwh, attributes)
+    if carbon_gco2e is not None:
+        metrics_state["carbon_histogram"].record(carbon_gco2e, attributes)

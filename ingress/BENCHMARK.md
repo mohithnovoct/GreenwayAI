@@ -178,36 +178,41 @@ Difference                   : +23.96 ms (enabled slower despite better host)
 The reversal indicates the ~24ms difference may reflect real overhead from the
 carbon path rather than a host-order artifact.
 
-### Interleaved A/B (2026-08-31, controlled for host drift)
+### Interleaved A/B (2026-09-03, counterbalanced order)
 
-To eliminate host-order confounding, ran 10 rounds of alternating small batches
-(50 requests each, concurrency 10) between enabled and disabled gateways. Both
-arms were sampled throughout the same continuously drifting host conditions
-(load_avg from 1.09 to 2.48). Total 500 requests per arm.
+To eliminate host-order confounding, ran 20 rounds of alternating small batches
+(50 requests each, concurrency 10) between enabled and disabled gateways. Odd
+rounds ran enabled then disabled; even rounds ran disabled then enabled. Both
+arms were sampled throughout the same host conditions (load_avg from 1.40 to
+1.88). Total 1000 requests per arm.
 
 ```text
-arm        p50_tax_ms  p95_tax_ms  p99_tax_ms  (500 requests per arm)
-enabled         71.69     148.61     185.15
-disabled        54.71     124.68     187.73
+arm        p50_tax_ms  p95_tax_ms  p99_tax_ms  (1000 requests per arm)
+enabled         22.47      49.15      64.15
+disabled        24.67      68.66     106.41
 ```
 
-**Difference at p50: +16.98 ms** (enabled slower)
+**Difference at p50: -2.20 ms** (enabled was slightly faster)
 
-Across all 10 rounds, enabled p50 ranged 57–92 ms, disabled ranged 43–66 ms.
-The consistent per-round gap strongly indicates the difference is real, not
-due to order-dependent host variations.
+Across all 20 rounds, enabled p50 ranged 19.48–29.95 ms and disabled ranged
+20.42–34.01 ms. Enabled was slower in 5 of 20 paired rounds, so the result does
+not support a measurable carbon-path penalty at this sample size.
 
 ### Conclusion
 
-The carbon-conversion logic adds a **measurable ~17–24 ms median latency cost**
-under the test conditions (static-fallback MOER tier, mock NVML, shared dev
-container). This overhead:
+The counterbalanced run does **not** reproduce the earlier apparent carbon
+cost. Under the test conditions (static-fallback MOER tier, mock NVML, shared
+dev container), enabled was 2.20 ms faster at p50, and disabled was slower at
+both p95 and p99. The difference is within ordinary request variance and is not
+distinguishable from noise without a larger controlled study.
 
-- Is **not catastrophic** relative to overall gateway tax (p50 tax is 71.69 ms
-  with carbon, still within Phase 1 acceptance if host contention were resolved)
-- Is **consistent** across multiple sampling designs and host conditions
-- Is **modest relative to tail latency** (p95/p99 show much larger variance from
-  host pressure than from the carbon flag)
+- The prior one-order run is not evidence of a causal ~17 ms cost because every
+  round ran enabled first.
+- The new order-balanced per-round spread shows substantial overlap between
+  arms.
+- The new p99 result is a crossover in the opposite direction: enabled 64.15 ms
+  versus disabled 106.41 ms. The prior crossover (disabled 187.73 ms slower than
+  enabled 185.15 ms) therefore does not persist; it was session/order-sensitive.
 
 The cost is attributed to the `await request.app.state.carbon_engine.get_moer_with_tier()`
 call in the request path. The implementation uses background cache refresh
@@ -218,7 +223,7 @@ misses and lock contention during initial startup still incur per-request latenc
 
 No immediate optimization is required. The carbon path is:
 1. **Verified for correctness** with passing unit tests and live request validation
-2. **Documented with honest cost accounting** (~17ms p50 overhead measured via A/B)
+2. **Documented with counterbalanced cost accounting** (no detectable penalty in this run)
 3. **Integrated via background cache refresh** to minimize request-path blocking
 4. **Short-circuitable via `GREENWAY_CARBON_DISABLED=true`** for A/B validation
 
@@ -232,22 +237,26 @@ readiness. Future deployments should:
 
 ## Appendix: Raw interleaved A/B per-round evidence
 
-The interleaved benchmark alternated enabled and disabled batches in the same host
-session. Each round contained one 50-request enabled batch followed by one 50-request
-disabled batch, with resource readings captured immediately before each batch.
+The original appendix below is retained as superseded historical evidence: it
+ran enabled first in every round and was not counterbalanced.
+
+### Superseded: original uncounterbalanced 10-round appendix (2026-08-31)
+
+The table below is historical only. Every round ran enabled -> disabled, so it
+cannot separate carbon-path cost from second-in-round effects.
 
 | Round | Arm order | Resource state before enabled | Enabled p50 (ms) | Resource state before disabled | Disabled p50 (ms) |
 |---|---|---|---:|---|---:|
-| 1 | enabled → disabled | load_avg_1m=1.09, available_memory=2503.2 MiB | 115.22 | load_avg_1m=1.09, available_memory=2492.3 MiB | 54.67 |
-| 2 | enabled → disabled | load_avg_1m=1.64, available_memory=2499.6 MiB | 62.21 | load_avg_1m=1.64, available_memory=2497.4 MiB | 54.10 |
-| 3 | enabled → disabled | load_avg_1m=1.64, available_memory=2497.7 MiB | 66.19 | load_avg_1m=1.64, available_memory=2497.8 MiB | 57.53 |
-| 4 | enabled → disabled | load_avg_1m=1.64, available_memory=2499.9 MiB | 57.47 | load_avg_1m=1.64, available_memory=2499.7 MiB | 43.52 |
-| 5 | enabled → disabled | load_avg_1m=1.64, available_memory=2499.6 MiB | 62.61 | load_avg_1m=1.64, available_memory=2503.3 MiB | 58.81 |
-| 6 | enabled → disabled | load_avg_1m=1.83, available_memory=2544.1 MiB | 69.12 | load_avg_1m=1.83, available_memory=2540.5 MiB | 45.19 |
-| 7 | enabled → disabled | load_avg_1m=1.83, available_memory=2540.5 MiB | 66.55 | load_avg_1m=1.83, available_memory=2539.3 MiB | 62.22 |
-| 8 | enabled → disabled | load_avg_1m=1.83, available_memory=2537.4 MiB | 76.42 | load_avg_1m=1.83, available_memory=2541.7 MiB | 48.07 |
-| 9 | enabled → disabled | load_avg_1m=1.83, available_memory=2541.0 MiB | 71.02 | load_avg_1m=1.83, available_memory=2536.4 MiB | 66.82 |
-| 10 | enabled → disabled | load_avg_1m=1.83, available_memory=2512.8 MiB | 92.75 | load_avg_1m=2.48, available_memory=2638.0 MiB | 61.67 |
+| 1 | enabled -> disabled | load_avg_1m=1.09, available_memory=2503.2 MiB | 115.22 | load_avg_1m=1.09, available_memory=2492.3 MiB | 54.67 |
+| 2 | enabled -> disabled | load_avg_1m=1.64, available_memory=2499.6 MiB | 62.21 | load_avg_1m=1.64, available_memory=2497.4 MiB | 54.10 |
+| 3 | enabled -> disabled | load_avg_1m=1.64, available_memory=2497.7 MiB | 66.19 | load_avg_1m=1.64, available_memory=2497.8 MiB | 57.53 |
+| 4 | enabled -> disabled | load_avg_1m=1.64, available_memory=2499.9 MiB | 57.47 | load_avg_1m=1.64, available_memory=2499.7 MiB | 43.52 |
+| 5 | enabled -> disabled | load_avg_1m=1.64, available_memory=2499.6 MiB | 62.61 | load_avg_1m=1.64, available_memory=2503.3 MiB | 58.81 |
+| 6 | enabled -> disabled | load_avg_1m=1.83, available_memory=2544.1 MiB | 69.12 | load_avg_1m=1.83, available_memory=2540.5 MiB | 45.19 |
+| 7 | enabled -> disabled | load_avg_1m=1.83, available_memory=2540.5 MiB | 66.55 | load_avg_1m=1.83, available_memory=2539.3 MiB | 62.22 |
+| 8 | enabled -> disabled | load_avg_1m=1.83, available_memory=2537.4 MiB | 76.42 | load_avg_1m=1.83, available_memory=2541.7 MiB | 48.07 |
+| 9 | enabled -> disabled | load_avg_1m=1.83, available_memory=2541.0 MiB | 71.02 | load_avg_1m=1.83, available_memory=2536.4 MiB | 66.82 |
+| 10 | enabled -> disabled | load_avg_1m=1.83, available_memory=2512.8 MiB | 92.75 | load_avg_1m=2.48, available_memory=2638.0 MiB | 61.67 |
 
 Aggregate across all 10 rounds (500 requests per arm):
 
@@ -257,7 +266,34 @@ enabled         71.69     148.61     185.15
 disabled        54.71     124.68     187.73
 ```
 
-The enabled arm remained slower at p50 across the interleaved design, with a
-measured +16.98 ms difference. This is the benchmark evidence used to close the
-Task 4 performance question in the current dev environment, without claiming a
-production deployment readiness or a full GPU-backed result set.
+The enabled arm was 16.98 ms slower at p50 in this uncounterbalanced run; the
+counterbalanced result above supersedes that conclusion.
+
+## Appendix: Counterbalanced raw per-round evidence (2026-09-03)
+
+Each round contained one 50-request batch per arm at concurrency 10. Odd rounds
+ran enabled -> disabled; even rounds ran disabled -> enabled. Resource readings
+were captured immediately before each batch.
+
+| Round | Arm order | Resource state before enabled | Enabled p50 (ms) | Resource state before disabled | Disabled p50 (ms) |
+|---:|---|---|---:|---|---:|
+| 1 | enabled -> disabled | load=1.40, mem=12731.0 MiB | 29.95 | load=1.40, mem=12728.7 MiB | 34.01 |
+| 2 | disabled -> enabled | load=1.40, mem=12724.2 MiB | 21.15 | load=1.40, mem=12724.0 MiB | 26.37 |
+| 3 | enabled -> disabled | load=1.40, mem=12724.1 MiB | 27.35 | load=1.40, mem=12721.4 MiB | 24.73 |
+| 4 | disabled -> enabled | load=1.52, mem=12722.7 MiB | 20.60 | load=1.40, mem=12721.5 MiB | 23.84 |
+| 5 | enabled -> disabled | load=1.52, mem=12722.7 MiB | 22.53 | load=1.52, mem=12722.4 MiB | 23.17 |
+| 6 | disabled -> enabled | load=1.52, mem=12732.5 MiB | 22.37 | load=1.52, mem=12722.4 MiB | 24.11 |
+| 7 | enabled -> disabled | load=1.52, mem=12731.2 MiB | 24.60 | load=1.52, mem=12731.7 MiB | 27.87 |
+| 8 | disabled -> enabled | load=1.52, mem=12717.1 MiB | 22.06 | load=1.52, mem=12717.5 MiB | 24.11 |
+| 9 | enabled -> disabled | load=1.52, mem=12717.3 MiB | 22.17 | load=1.52, mem=12717.3 MiB | 25.53 |
+| 10 | disabled -> enabled | load=1.52, mem=12713.7 MiB | 20.68 | load=1.52, mem=12714.8 MiB | 29.10 |
+| 11 | enabled -> disabled | load=1.52, mem=12713.5 MiB | 26.13 | load=1.52, mem=12731.8 MiB | 20.65 |
+| 12 | disabled -> enabled | load=1.52, mem=12734.9 MiB | 22.96 | load=1.52, mem=12733.0 MiB | 23.67 |
+| 13 | enabled -> disabled | load=1.88, mem=12734.7 MiB | 19.53 | load=1.88, mem=12736.8 MiB | 20.86 |
+| 14 | disabled -> enabled | load=1.88, mem=12741.0 MiB | 22.06 | load=1.88, mem=12736.8 MiB | 30.60 |
+| 15 | enabled -> disabled | load=1.88, mem=12743.0 MiB | 20.12 | load=1.88, mem=12743.1 MiB | 23.52 |
+| 16 | disabled -> enabled | load=1.88, mem=12745.2 MiB | 23.69 | load=1.88, mem=12745.2 MiB | 20.42 |
+| 17 | enabled -> disabled | load=1.88, mem=12747.4 MiB | 22.42 | load=1.88, mem=12747.4 MiB | 32.64 |
+| 18 | disabled -> enabled | load=1.88, mem=12749.4 MiB | 19.48 | load=1.88, mem=12748.9 MiB | 20.73 |
+| 19 | enabled -> disabled | load=1.88, mem=12757.2 MiB | 24.73 | load=1.88, mem=12757.6 MiB | 21.50 |
+| 20 | disabled -> enabled | load=1.88, mem=12759.8 MiB | 23.30 | load=1.88, mem=12757.6 MiB | 22.28 |

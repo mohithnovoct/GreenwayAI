@@ -110,14 +110,23 @@ class CarbonEngine:
             return None
 
     async def refresh_moer_cache(self) -> tuple[float, str]:
+        provider_failed = False
         for fetcher in (self._fetch_from_electricity_maps, self._fetch_from_watttime):
-            result = await fetcher()
+            try:
+                result = await fetcher()
+            except Exception as exc:
+                provider_failed = True
+                logger.warning("MOER provider failed for %s: %s", self.region, exc)
+                continue
             if result is not None:
                 moer, tier = result
                 self._moer_cache = moer
                 self._moer_cache_tier = tier
                 self._moer_cache_time = time.monotonic()
                 return moer, tier
+
+        if provider_failed:
+            raise RuntimeError(f"all configured MOER providers failed for {self.region}")
 
         fallback = self._get_static_moer()
         self._moer_cache = fallback

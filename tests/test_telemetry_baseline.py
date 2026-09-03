@@ -1,10 +1,14 @@
 import types
+import json
+import logging
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
 import telemetry.nvml_sampler as nvml_sampler_module
 from ingress.app import app, request_energy_window_start
+from ingress.mock_backend import mock_response
 from telemetry.energy_model import EnergyModel
 from telemetry.nvml_sampler import NVMLPowerSampler
 
@@ -82,3 +86,43 @@ def test_nvml_sampler_falls_back_to_mock_mode_when_library_missing(monkeypatch):
 
     response = TestClient(app).get("/health")
     assert response.status_code == 200
+
+
+def test_gateway_fails_open_when_all_carbon_providers_raise(monkeypatch, caplog):
+    caplog.set_level(logging.INFO)
+    monkeypatch.setenv("VLLM_BACKEND_URL", "")
+    with TestClient(app) as client:
+        engine = app.state.carbon_engine
+        engine._moer_cache = None
+        engine._moer_cache_time = None
+        engine._refresh_task = None
+
+        async def raise_outage():
+            raise RuntimeError("forced provider outage")
+
+        monkeypatch.setattr(engine, "_fetch_from_electricity_maps", raise_outage)
+        monkeypatch.setattr(engine, "_fetch_from_watttime", raise_outage)
+        response = client.post("/v1/chat/completions", json={"model": "mock", "messages": [{"role": "user", "content": "hello"}]})
+
+    assert response.status_code == 200
+    assert response.headers["X-Greenway-Carbon-gCO2e"] == "null"
+    assert response.headers["X-Greenway-Carbon-Source"] == "unavailable"
+    records = [record.message for record in caplog.records if "carbon_gco2e" in record.message]
+    assert records
+    assert json.loads(records[-1])["carbon_gco2e"] is None
+
+
+def test_gateway_fails_open_when_nvml_raises_mid_request(monkeypatch):
+    monkeypatch.setenv("VLLM_BACKEND_URL", "http://backend")
+    with TestClient(app) as client:
+        async def send(request, **kwargs):
+            return httpx.Response(200, json=mock_response({"model": "mock", "messages": [{"content": "hello"}]}), request=request)
+
+        monkeypatch.setattr(app.state.http_client, "send", send)
+        monkeypatch.setattr(app.state.nvml_sampler, "estimate_request_energy_kwh", lambda request_id: (_ for _ in ()).throw(RuntimeError("forced NVML outage")))
+        response = client.post("/v1/chat/completions", json={"model": "mock", "messages": [{"role": "user", "content": "hello"}]})
+
+    assert response.status_code == 200
+    assert response.headers["X-Greenway-Energy-kWh"] == "null"
+    assert response.headers["X-Greenway-Carbon-gCO2e"] == "null"
+    assert response.headers["X-Greenway-Energy-Source"] == "unavailable"

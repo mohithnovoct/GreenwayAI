@@ -13,7 +13,10 @@ RUN pip install --no-cache-dir \
     "pydantic>=2.9,<3.0" \
     "python-dotenv>=1.0,<2.0" \
     "httpx>=0.27,<1.0" \
-    "tiktoken>=0.8,<1.0"
+    "tiktoken>=0.8,<1.0" \
+    "opentelemetry-api>=1.31,<2.0" \
+    "opentelemetry-sdk>=1.31,<2.0" \
+    "opentelemetry-exporter-otlp>=1.31,<2.0"
 
 EXPOSE 8000
 CMD ["uvicorn", "ingress.app:app", "--host", "0.0.0.0", "--port", "8000"]
