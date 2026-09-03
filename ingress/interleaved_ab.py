@@ -13,7 +13,10 @@ import time
 
 import httpx
 
-PAYLOAD = {"model": "greenway-mock", "messages": [{"role": "user", "content": "Hello from GreenwayAI."}]}
+PAYLOAD = {
+    "model": "greenway-mock",
+    "messages": [{"role": "user", "content": """I am preparing a quarterly sustainability review for a cloud-based language model service. Analyze the following operational scenario and produce practical recommendations for the engineering and finance teams. The service receives customer support questions, incident reports, and documentation requests from several regions. We need to understand which changes could reduce unnecessary model work without reducing answer quality or omitting important caveats. Compare response strategies, identify where repeated requests or ambiguous terminology may create avoidable work, and explain how an engineering team could validate improvements using production-like traffic. Include assumptions, risks, and measurable success criteria. Discuss how the recommendations affect latency, energy use, carbon reporting, and user satisfaction. The audience understands basic APIs and observability but may not know specialized model-serving terminology, so define abbreviations the first time you use them."""}],
+}
 
 
 async def measure_batch(
@@ -40,6 +43,28 @@ async def measure_batch(
 
     pairs = await asyncio.gather(*(one() for _ in range(count)))
     return [pair[0] for pair in pairs], [pair[1] for pair in pairs]
+
+
+async def measure_batch_telemetry(
+    client: httpx.AsyncClient,
+    gateway_url: str,
+    count: int,
+    concurrency: int,
+) -> tuple[list[float], list[float], list[float]]:
+    semaphore = asyncio.Semaphore(concurrency)
+
+    async def one() -> tuple[float, float, float]:
+        async with semaphore:
+            response = await client.post(f"{gateway_url}/v1/chat/completions", json=PAYLOAD)
+            response.raise_for_status()
+            return (
+                float(response.headers.get("X-Greenway-Carbon-gCO2e", "nan")),
+                float(response.headers.get("X-Greenway-Energy-kWh", "nan")),
+                float(response.headers.get("X-Greenway-Latency-ms", "nan")),
+            )
+
+    results = await asyncio.gather(*(one() for _ in range(count)))
+    return ([row[0] for row in results], [row[1] for row in results], [row[2] for row in results])
 
 
 def percentile(values: list[float], fraction: float) -> float:
@@ -73,6 +98,10 @@ async def main(args: argparse.Namespace) -> None:
 
     enabled_batches: list[list[float]] = []
     disabled_batches: list[list[float]] = []
+    enabled_carbon: list[float] = []
+    disabled_carbon: list[float] = []
+    enabled_energy: list[float] = []
+    disabled_energy: list[float] = []
     rows: list[tuple[int, str, str, float, str, float]] = []
 
     print(f"resource {format_resource_state('start')}")
@@ -88,7 +117,12 @@ async def main(args: argparse.Namespace) -> None:
             for arm in ("enabled", "disabled") if first_enabled else ("disabled", "enabled"):
                 resources[arm] = format_resource_state(f"before {arm}")
                 gateway = args.enabled_gateway if arm == "enabled" else args.disabled_gateway
-                _, taxes = await measure_batch(client, gateway, args.backend, args.batch_size, args.concurrency)
+                if args.telemetry:
+                    carbon, energy, taxes = await measure_batch_telemetry(client, gateway, args.batch_size, args.concurrency)
+                    (enabled_carbon if arm == "enabled" else disabled_carbon).extend(carbon)
+                    (enabled_energy if arm == "enabled" else disabled_energy).extend(energy)
+                else:
+                    _, taxes = await measure_batch(client, gateway, args.backend, args.batch_size, args.concurrency)
                 batches[arm] = taxes
                 print(f"resource {resources[arm]}")
                 print(f"  {arm} p50={statistics.median(taxes):.2f}ms (n={len(taxes)})")
@@ -128,6 +162,14 @@ async def main(args: argparse.Namespace) -> None:
     else:
         print(f"→ Disabled is slower by {abs(diff):.2f}ms (carbon path not a cause)")
 
+    if args.telemetry:
+        print()
+        print("metric       enabled_mean       disabled_mean      delta")
+        for name, enabled, disabled in (("energy_kwh", enabled_energy, disabled_energy), ("carbon_gco2e", enabled_carbon, disabled_carbon)):
+            enabled_mean = statistics.fmean(enabled)
+            disabled_mean = statistics.fmean(disabled)
+            print(f"{name:<12} {enabled_mean:16.12g} {disabled_mean:16.12g} {enabled_mean - disabled_mean:+.12g}")
+
     print()
     print("round | arm order             | before enabled | enabled p50 | before disabled | disabled p50")
     for number, order, enabled_resource, enabled_p50, disabled_resource, disabled_p50 in rows:
@@ -145,4 +187,5 @@ if __name__ == "__main__":
     parser.add_argument("--batch-size", type=int, default=50, help="Requests per batch")
     parser.add_argument("--rounds", type=int, default=10, help="Number of A/B alternation rounds")
     parser.add_argument("-c", "--concurrency", type=int, default=10, help="Concurrent requests per batch")
+    parser.add_argument("--telemetry", action="store_true", help="Collect energy and carbon response headers")
     asyncio.run(main(parser.parse_args()))

@@ -15,6 +15,7 @@ from fastapi.responses import JSONResponse, Response
 from carbon.carbon_engine import CarbonEngine
 from ingress.mock_backend import mock_response
 from ingress.normalization import build_gateway_request, count_tokens
+from optimizers.prompt_optimizer import optimize_gateway_request, should_optimize
 from telemetry.energy_model import estimate_energy_kwh
 from telemetry.nvml_sampler import NVMLPowerSampler
 from telemetry.parametric import ParametricEnergyEstimator
@@ -91,10 +92,23 @@ async def chat_completions(
         x_greenway_sla.strip().lower() if x_greenway_sla else None,
     )
     normalization_ms = (time.perf_counter() - normalization_started) * 1000
+    original_prompt = gateway_request.normalized_prompt or ""
+    optimization_arm = "optimized" if should_optimize() else "baseline"
+    if optimization_arm == "optimized":
+        optimization_result = await asyncio.to_thread(optimize_gateway_request, gateway_request)
+        gateway_request = optimization_result.request
+        optimized_prompt = optimization_result.optimized_prompt
+        optimized_tokens = optimization_result.optimized_tokens
+        optimization_changes = optimization_result.changes
+    else:
+        optimized_prompt = original_prompt
+        optimized_tokens = gateway_request.input_tokens or 0
+        optimization_changes = ()
     metadata = {
         "X-Greenway-Request-ID": gateway_request.request_id,
         "X-Greenway-Content-Hash": gateway_request.content_hash or "",
         "X-Greenway-Input-Tokens": str(gateway_request.input_tokens),
+        "X-Greenway-Prompt-Optimization": optimization_arm,
     }
     backend_url = os.getenv("VLLM_BACKEND_URL", "").strip().rstrip("/")
     proxy_started = time.perf_counter()
@@ -216,21 +230,21 @@ async def chat_completions(
                     input_tokens=gateway_request.input_tokens or 0,
                     output_tokens=output_tokens,
                 ) + hardware_energy_kwh
-            if os.getenv("GREENWAY_CARBON_DISABLED", "false").strip().lower() == "true":
-                moer_kg_per_kwh = request.app.state.carbon_engine._get_static_moer()
-                carbon_source_tier = "static_fallback"
-            elif energy_kwh is not None:
-                try:
-                    moer_kg_per_kwh, carbon_source_tier = await request.app.state.carbon_engine.get_moer_with_tier()
-                except Exception as error:
-                    logger.warning("Carbon telemetry unavailable: %s", error)
-            if energy_kwh is not None and moer_kg_per_kwh is not None:
-                carbon_gco2e = request.app.state.carbon_engine.estimate_carbon_gco2e(
-                    energy_kwh=energy_kwh,
-                    moer_kg_per_kwh=moer_kg_per_kwh,
-                )
-            else:
-                carbon_source_tier = "unavailable"
+        if os.getenv("GREENWAY_CARBON_DISABLED", "false").strip().lower() == "true":
+            moer_kg_per_kwh = request.app.state.carbon_engine._get_static_moer()
+            carbon_source_tier = "static_fallback"
+        elif energy_kwh is not None:
+            try:
+                moer_kg_per_kwh, carbon_source_tier = await request.app.state.carbon_engine.get_moer_with_tier()
+            except Exception as error:
+                logger.warning("Carbon telemetry unavailable: %s", error)
+        if energy_kwh is not None and moer_kg_per_kwh is not None:
+            carbon_gco2e = request.app.state.carbon_engine.estimate_carbon_gco2e(
+                energy_kwh=energy_kwh,
+                moer_kg_per_kwh=moer_kg_per_kwh,
+            )
+        else:
+            carbon_source_tier = "unavailable"
         proxy_ms = (time.perf_counter() - proxy_started) * 1000
         response.headers["X-Greenway-Output-Tokens"] = str(output_tokens)
         response.headers["X-Greenway-Energy-kWh"] = str(round(energy_kwh, 12)) if energy_kwh is not None else "null"
@@ -249,6 +263,12 @@ async def chat_completions(
             "request_id": gateway_request.request_id,
             "content_hash": gateway_request.content_hash,
             "input_tokens": gateway_request.input_tokens,
+            "prompt_optimization_arm": optimization_arm,
+            "original_prompt": original_prompt,
+            "optimized_prompt": optimized_prompt,
+            "original_input_tokens": optimized_tokens if optimization_arm == "baseline" else optimization_result.original_tokens,
+            "optimized_input_tokens": optimized_tokens,
+            "prompt_optimization_changes": list(optimization_changes),
             "output_tokens": output_tokens,
             "energy_kwh": round(energy_kwh, 12) if energy_kwh is not None else None,
             "carbon_gco2e": round(carbon_gco2e, 12) if carbon_gco2e is not None else None,

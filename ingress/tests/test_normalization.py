@@ -1,6 +1,21 @@
 import hashlib
+import pytest
 
 from ingress.normalization import build_gateway_request, canonicalize, normalize_payload, prompt_text
+from ingress.mock_backend import mock_response
+
+
+def test_mock_backend_echoes_prompt_by_default(monkeypatch):
+    monkeypatch.delenv("GREENWAY_MOCK_ADAPTIVE_RESPONSES", raising=False)
+    response = mock_response({"messages": [{"role": "user", "content": "test prompt"}]})
+    assert response["choices"][0]["message"]["content"] == "test prompt"
+
+
+@pytest.mark.parametrize("content, expected_count", [("Return no more than 5 bullets.", 3), ("Explain this in detail.", 8)])
+def test_adaptive_mock_changes_response_length(monkeypatch, content, expected_count):
+    monkeypatch.setenv("GREENWAY_MOCK_ADAPTIVE_RESPONSES", "true")
+    response = mock_response({"messages": [{"role": "user", "content": content}]})
+    assert len(response["choices"][0]["message"]["content"].splitlines()) == expected_count
 
 
 def test_multiline_content_is_preserved_but_hash_is_canonicalized():
