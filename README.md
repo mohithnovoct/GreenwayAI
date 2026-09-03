@@ -33,6 +33,23 @@ The gateway stub is available at `http://localhost:8000`, with API docs at
 included as integration placeholders. The vLLM service remains commented out
 until GPU-backed serving is introduced.
 
+### Gemini backend
+
+Create a free key at [Google AI Studio](https://aistudio.google.com/apikey),
+put it only in the ignored `.env` file, and select the hosted backend:
+
+```text
+GREENWAY_BACKEND_MODE=gemini
+GEMINI_API_KEY=your-key-here
+GREENWAY_LOG_PROMPTS=false
+```
+
+The gateway sends OpenAI-compatible requests to Gemini 2.5 Flash. `mock` and
+`vllm` remain available; switching modes requires only an environment change
+and restart. Remote backends automatically use parametric energy accounting;
+local NVML is reserved for local inference hardware. Full prompt logging is
+disabled by default and should be enabled only for controlled debugging.
+
 For local Python development, install [uv](https://docs.astral.sh/uv/) and run:
 
 ```bash

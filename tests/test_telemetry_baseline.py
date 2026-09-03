@@ -7,7 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import telemetry.nvml_sampler as nvml_sampler_module
-from ingress.app import app, request_energy_window_start
+from ingress.app import app, is_remote_backend_url, request_energy_window_start
 from ingress.mock_backend import mock_response
 from telemetry.energy_model import EnergyModel
 from telemetry.nvml_sampler import NVMLPowerSampler
@@ -45,6 +45,19 @@ def test_request_energy_window_start_excludes_pool_wait():
     assert request_energy_window_start(trace_started=10.0, pool_acquire_ms=250.0) == pytest.approx(10.25)
 
 
+@pytest.mark.parametrize(
+    ("url", "expected_remote"),
+    [
+        ("http://localhost:8001/v1/chat/completions", False),
+        ("http://127.0.0.1:8001/v1/chat/completions", False),
+        ("http://mock-backend:8001/v1/chat/completions", False),
+        ("https://api.example.com/v1/chat/completions", True),
+    ],
+)
+def test_backend_url_remote_classification_uses_host(url, expected_remote):
+    assert is_remote_backend_url(url) is expected_remote
+
+
 def test_app_lifecycle_creates_nvml_sampler():
     with TestClient(app) as client:
         assert hasattr(app.state, "nvml_sampler")
@@ -62,6 +75,47 @@ def test_nvml_sampler_ignores_queue_delay_for_identical_tokens():
     fast_energy = sampler.estimate_request_energy_kwh("queued-fast")
     slow_energy = sampler.estimate_request_energy_kwh("queued-slow")
     assert fast_energy == pytest.approx(slow_energy)
+
+
+def test_nvml_sampler_shares_overlapping_power_between_two_requests():
+    sampler = NVMLPowerSampler()
+    sampler.register_request("one", start_ts=0.0, end_ts=0.5)
+    sampler.register_request("two", start_ts=0.25, end_ts=0.75)
+    sampler.add_sample(0.0, 100.0)
+    sampler.add_sample(1.0, 100.0)
+
+    first = sampler.estimate_request_energy_kwh("one")
+    second = sampler.estimate_request_energy_kwh("two")
+    equivalent_total_window = 100.0 * 0.75 / 3_600_000.0
+
+    assert first + second == pytest.approx(equivalent_total_window)
+
+
+def test_nvml_sampler_shares_overlapping_power_across_three_requests():
+    sampler = NVMLPowerSampler()
+    for request_id in ("one", "two", "three"):
+        sampler.register_request(request_id, start_ts=0.0, end_ts=0.75)
+    sampler.add_sample(0.0, 120.0)
+    sampler.add_sample(1.0, 120.0)
+
+    energies = [sampler.estimate_request_energy_kwh(request_id) for request_id in ("one", "two", "three")]
+    expected_each = 120.0 * 0.75 / 3 / 3_600_000.0
+
+    assert energies == pytest.approx([expected_each] * 3)
+
+
+def test_nvml_sampler_prunes_completed_request_registry_after_burst():
+    sampler = NVMLPowerSampler()
+    for index in range(1000):
+        request_id = f"burst-{index}"
+        sampler.register_request(request_id, start_ts=0.0, end_ts=0.01)
+        sampler.add_sample(0.0, 100.0)
+        sampler.add_sample(1.0, 100.0)
+        sampler.complete_request(request_id, end_ts=0.01)
+        sampler.estimate_request_energy_kwh(request_id)
+
+    assert len(sampler.get_inflight_requests()) == 0
+    assert len(sampler._samples) == 0
 
 
 def test_nvml_sampler_falls_back_to_mock_mode_when_library_missing(monkeypatch):
@@ -113,7 +167,8 @@ def test_gateway_fails_open_when_all_carbon_providers_raise(monkeypatch, caplog)
 
 
 def test_gateway_fails_open_when_nvml_raises_mid_request(monkeypatch):
-    monkeypatch.setenv("VLLM_BACKEND_URL", "http://backend")
+    monkeypatch.setattr("ingress.app.backend_configuration", lambda: ("http://backend/v1/chat/completions", "", {}, False))
+    monkeypatch.setenv("GREENWAY_ENERGY_MODE", "nvml")
     with TestClient(app) as client:
         async def send(request, **kwargs):
             return httpx.Response(200, json=mock_response({"model": "mock", "messages": [{"content": "hello"}]}), request=request)
@@ -126,3 +181,97 @@ def test_gateway_fails_open_when_nvml_raises_mid_request(monkeypatch):
     assert response.headers["X-Greenway-Energy-kWh"] == "null"
     assert response.headers["X-Greenway-Carbon-gCO2e"] == "null"
     assert response.headers["X-Greenway-Energy-Source"] == "unavailable"
+
+
+def test_nvml_energy_is_hardware_only(monkeypatch):
+    monkeypatch.setattr("ingress.app.backend_configuration", lambda: ("http://localhost/v1/chat/completions", "", {}, False))
+    monkeypatch.setenv("GREENWAY_ENERGY_MODE", "nvml")
+    monkeypatch.setenv("GREENWAY_CARBON_DISABLED", "true")
+
+    with TestClient(app) as client:
+        async def send(request, **kwargs):
+            response = mock_response({"model": "mock", "messages": [{"content": "hello"}]})
+            response["usage"] = {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150}
+            return httpx.Response(200, json=response, request=request)
+
+        monkeypatch.setattr(app.state.http_client, "send", send)
+        monkeypatch.setattr(app.state.nvml_sampler, "estimate_request_energy_kwh", lambda request_id: 0.000123)
+        response = client.post("/v1/chat/completions", json={"model": "mock", "messages": [{"role": "user", "content": "hello"}]})
+
+    assert response.status_code == 200
+    assert response.headers["X-Greenway-Energy-kWh"] == "0.000123"
+    assert response.headers["X-Greenway-Energy-Source"] == "nvml"
+
+
+def test_remote_backend_forces_parametric_energy(monkeypatch):
+    monkeypatch.setenv("GREENWAY_BACKEND_MODE", "gemini")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-gemini-key")
+    monkeypatch.delenv("GREENWAY_ENERGY_MODE", raising=False)
+    monkeypatch.setenv("GREENWAY_CARBON_DISABLED", "true")
+    payload = {
+        "model": "gemini-2.5-flash",
+        "choices": [{"message": {"role": "assistant", "content": "answer"}}],
+        "usage": {"prompt_tokens": 10, "completion_tokens": 2, "total_tokens": 12},
+    }
+
+    with TestClient(app) as client:
+        async def send(request, **kwargs):
+            return httpx.Response(200, json=payload, request=request)
+
+        monkeypatch.setattr(app.state.http_client, "send", send)
+        response = client.post("/v1/chat/completions", json={"messages": [{"role": "user", "content": "hello"}]})
+
+    assert response.status_code == 200
+    assert response.headers["X-Greenway-Telemetry-Source"] == "parametric_estimated"
+    assert response.headers["X-Greenway-Energy-Source"] == "lca"
+
+
+def test_gemini_backend_uses_api_usage_and_bearer_auth(monkeypatch):
+    monkeypatch.setenv("GREENWAY_BACKEND_MODE", "gemini")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-gemini-key")
+    monkeypatch.setenv("GREENWAY_CARBON_DISABLED", "true")
+    captured = {}
+    payload = {
+        "id": "chatcmpl-real-shaped",
+        "object": "chat.completion",
+        "model": "gemini-2.5-flash",
+        "choices": [{"message": {"role": "assistant", "content": "A real-shaped answer."}, "finish_reason": "stop"}],
+        "usage": {"prompt_tokens": 41, "completion_tokens": 7, "total_tokens": 48},
+    }
+
+    with TestClient(app) as client:
+        async def send(request, **kwargs):
+            captured["url"] = str(request.url)
+            captured["authorization"] = request.headers["authorization"]
+            captured["body"] = json.loads(request.content)
+            return httpx.Response(200, json=payload, request=request)
+
+        monkeypatch.setattr(app.state.http_client, "send", send)
+        response = client.post(
+            "/v1/chat/completions",
+            json={"model": "ignored", "messages": [{"role": "user", "content": "A short test prompt."}]},
+        )
+
+    assert response.status_code == 200
+    assert captured["url"] == "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+    assert captured["authorization"] == "Bearer test-gemini-key"
+    assert captured["body"]["model"] == "gemini-2.5-flash"
+    assert response.headers["X-Greenway-Input-Tokens"] == "41"
+    assert response.headers["X-Greenway-Output-Tokens"] == "7"
+
+
+def test_prompt_bodies_are_not_logged_by_default(monkeypatch, caplog):
+    monkeypatch.setenv("VLLM_BACKEND_URL", "")
+    monkeypatch.delenv("GREENWAY_LOG_PROMPTS", raising=False)
+    caplog.set_level(logging.INFO)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            json={"model": "mock", "messages": [{"role": "user", "content": "private prompt marker"}]},
+        )
+
+    assert response.status_code == 200
+    records = [record.message for record in caplog.records if '"prompt_optimization_arm"' in record.message]
+    assert records
+    assert "private prompt marker" not in records[-1]

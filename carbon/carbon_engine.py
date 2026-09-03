@@ -28,6 +28,20 @@ PROVIDER_PUE = {
     "azure": 1.17,
 }
 
+ELECTRICITY_MAPS_ZONES = {
+    "us-east1": "US-SC",
+    "us-west1": "US-CAL-CISO",
+    "europe-west1": "BE",
+    "asia-southeast1": "SG",
+}
+
+WATTTIME_BAS = {
+    "us-east1": "SOUTHEAST",
+    "us-west1": "CAISO_NORTH",
+    "europe-west1": "ISONE_WCMA",
+    "asia-southeast1": "SG",
+}
+
 
 def apply_infrastructure_multipliers(raw_moer_kg_per_kwh: float, provider: str) -> float:
     """Apply the infrastructure multiplier chain: power efficiency x transmission x provider PUE."""
@@ -37,8 +51,10 @@ def apply_infrastructure_multipliers(raw_moer_kg_per_kwh: float, provider: str) 
 
 
 class CarbonEngine:
-    def __init__(self, *, region: str = "us-east1", provider: str = "google", moer_cache_ttl_seconds: int = 300) -> None:
+    def __init__(self, *, region: str = "us-east1", provider: str = "google", moer_cache_ttl_seconds: int = 300, http_client: httpx.AsyncClient | None = None) -> None:
         self.region = region
+        self.electricity_maps_zone = os.getenv("GREENWAY_ELECTRICITYMAPS_ZONE", "").strip() or ELECTRICITY_MAPS_ZONES.get(region, region)
+        self.watttime_ba = os.getenv("GREENWAY_WATTTIME_BA", "").strip() or WATTTIME_BAS.get(region, region)
         self.provider = provider.lower()
         self.provider_pue = PROVIDER_PUE.get(self.provider, PROVIDER_PUE["google"])
         self.marginal_multiplier = 1.04 * 1.08 * self.provider_pue
@@ -48,6 +64,10 @@ class CarbonEngine:
         self._moer_cache_time: float | None = None
         self._refresh_lock: asyncio.Lock | None = None
         self._refresh_task: asyncio.Task[tuple[float, str]] | None = None
+        self._http_client = http_client or httpx.AsyncClient(timeout=10.0)
+
+    async def close(self) -> None:
+        await self._http_client.aclose()
 
     @property
     def refresh_lock(self) -> asyncio.Lock:
@@ -66,22 +86,21 @@ class CarbonEngine:
         if not key:
             return None
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.get(
-                    f"https://api.electricitymap.io/v3/carbon-intensity/latest?zone={self.region}",
-                    headers={"X-Bearer-Token": key},
-                )
-                if response.status_code != 200:
-                    logger.warning("Electricity Maps returned status %s for region %s.", response.status_code, self.region)
-                    return None
-                payload = response.json()
-                intensity = payload.get("carbonIntensity")
-                if intensity is None:
-                    logger.warning("Electricity Maps payload for %s missing carbonIntensity: %s", self.region, payload)
-                    return None
-                # Electricity Maps reports gCO2eq/kWh; convert to kgCO2eq/kWh so the
-                # final carbon formula can consistently use energy_kwh * moer_kg_per_kwh * 1000.
-                return float(intensity) / 1000.0, "electricitymaps"
+            response = await self._http_client.get(
+                f"https://api.electricitymap.io/v3/carbon-intensity/latest?zone={self.electricity_maps_zone}",
+                headers={"X-Bearer-Token": key},
+            )
+            if response.status_code != 200:
+                logger.warning("Electricity Maps returned status %s for zone %s.", response.status_code, self.electricity_maps_zone)
+                return None
+            payload = response.json()
+            intensity = payload.get("carbonIntensity")
+            if intensity is None:
+                logger.warning("Electricity Maps payload for %s missing carbonIntensity: %s", self.region, payload)
+                return None
+            # Electricity Maps reports gCO2eq/kWh; convert to kgCO2eq/kWh so the
+            # final carbon formula can consistently use energy_kwh * moer_kg_per_kwh * 1000.
+            return float(intensity) / 1000.0, "electricitymaps"
         except Exception as exc:  # pragma: no cover - network error path validated via unit tests
             logger.warning("Electricity Maps request failed for %s: %s", self.region, exc)
             return None
@@ -91,20 +110,19 @@ class CarbonEngine:
         if not key:
             return None
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.get(
-                    f"https://api.watttime.org/v2/data?ba={self.region}",
-                    headers={"Authorization": f"Bearer {key}"},
-                )
-                if response.status_code != 200:
-                    logger.warning("WattTime returned status %s for region %s.", response.status_code, self.region)
-                    return None
-                payload = response.json()
-                moer = payload.get("moer")
-                if moer is None:
-                    logger.warning("WattTime payload for %s missing moer: %s", self.region, payload)
-                    return None
-                return float(moer), "watttime"
+            response = await self._http_client.get(
+                f"https://api.watttime.org/v2/data?ba={self.watttime_ba}",
+                headers={"Authorization": f"Bearer {key}"},
+            )
+            if response.status_code != 200:
+                logger.warning("WattTime returned status %s for BA %s.", response.status_code, self.watttime_ba)
+                return None
+            payload = response.json()
+            moer = payload.get("moer")
+            if moer is None:
+                logger.warning("WattTime payload for %s missing moer: %s", self.region, payload)
+                return None
+            return float(moer), "watttime"
         except Exception as exc:  # pragma: no cover - network error path validated via unit tests
             logger.warning("WattTime request failed for %s: %s", self.region, exc)
             return None

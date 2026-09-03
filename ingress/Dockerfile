@@ -4,6 +4,7 @@ WORKDIR /app
 COPY pyproject.toml README.md ./
 COPY carbon ./carbon
 COPY ingress ./ingress
+COPY optimizers ./optimizers
 COPY shared ./shared
 COPY telemetry ./telemetry
 

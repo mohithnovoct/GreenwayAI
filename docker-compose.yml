@@ -7,6 +7,8 @@ services:
       - path: .env
         required: false
     environment:
+      GREENWAY_BACKEND_MODE: ${GREENWAY_BACKEND_MODE:-mock}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       VLLM_BACKEND_URL: ${VLLM_BACKEND_URL:-http://mock-backend:8001}
       OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: http://otel-collector:4318/v1/metrics
     ports:

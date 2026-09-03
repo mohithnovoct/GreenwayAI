@@ -87,6 +87,9 @@ class NVMLPowerSampler:
             self._inflight[request_id] = {
                 "start_ts": start_ts if start_ts is not None else now,
                 "end_ts": end_ts if end_ts is not None else now,
+                "completed": 0.0,
+                "estimated": 0.0,
+                "energy_kwh": 0.0,
             }
 
     def complete_request(self, request_id: str, *, end_ts: float | None = None) -> None:
@@ -95,10 +98,13 @@ class NVMLPowerSampler:
             if entry is None:
                 return
             entry["end_ts"] = end_ts if end_ts is not None else time.monotonic()
+            entry["completed"] = 1.0
+            self._recalculate_energy_locked()
 
     def add_sample(self, timestamp: float, power_watts: float) -> None:
         with self._lock:
             self._samples.append(PowerSample(timestamp=timestamp, power_watts=float(power_watts)))
+            self._prune_samples_locked()
 
     def _sample_loop(self) -> None:
         while not self._stop_event.wait(self.interval_seconds):
@@ -118,21 +124,62 @@ class NVMLPowerSampler:
             request = self._inflight.get(request_id)
             if request is None:
                 return 0.0
-            start_ts = request["start_ts"]
-            end_ts = request["end_ts"]
-            samples = list(self._samples)
+            self._recalculate_energy_locked()
+            request["estimated"] = 1.0
+            energy_kwh = request["energy_kwh"]
+            self._prune_completed_locked()
+            return energy_kwh
 
-        total_joules = 0.0
-        for index, sample in enumerate(samples):
-            sample_start = sample.timestamp
-            next_sample_ts = samples[index + 1].timestamp if index + 1 < len(samples) else end_ts
-            sample_end = min(next_sample_ts, end_ts)
-            overlap_start = max(start_ts, sample_start)
-            overlap_end = min(end_ts, sample_end)
-            if overlap_end <= overlap_start:
-                continue
-            total_joules += sample.power_watts * (overlap_end - overlap_start)
-        return total_joules / 3_600_000.0
+    def _request_end_locked(self, request: dict[str, float], now: float) -> float:
+        end_ts = request["end_ts"]
+        return end_ts if end_ts > request["start_ts"] or request["completed"] else now
+
+    def _recalculate_energy_locked(self) -> None:
+        now = time.monotonic()
+        requests = list(self._inflight.values())
+        for request in requests:
+            start_ts = request["start_ts"]
+            end_ts = self._request_end_locked(request, now)
+            total_joules = 0.0
+            for index, sample in enumerate(self._samples):
+                sample_start = sample.timestamp
+                next_sample_ts = self._samples[index + 1].timestamp if index + 1 < len(self._samples) else end_ts
+                overlap_start = max(start_ts, sample_start)
+                overlap_end = min(end_ts, next_sample_ts)
+                if overlap_end <= overlap_start:
+                    continue
+                boundaries = {overlap_start, overlap_end}
+                for other in requests:
+                    other_start = other["start_ts"]
+                    other_end = self._request_end_locked(other, now)
+                    if overlap_start < other_start < overlap_end:
+                        boundaries.add(other_start)
+                    if overlap_start < other_end < overlap_end:
+                        boundaries.add(other_end)
+                ordered_boundaries = sorted(boundaries)
+                for boundary_index in range(len(ordered_boundaries) - 1):
+                    segment_start = ordered_boundaries[boundary_index]
+                    segment_end = ordered_boundaries[boundary_index + 1]
+                    midpoint = (segment_start + segment_end) / 2
+                    active_count = sum(
+                        other["start_ts"] <= midpoint < self._request_end_locked(other, now)
+                        for other in requests
+                    )
+                    if active_count and start_ts <= midpoint < end_ts:
+                        total_joules += sample.power_watts * (segment_end - segment_start) / active_count
+            request["energy_kwh"] = total_joules / 3_600_000.0
+
+    def _prune_samples_locked(self) -> None:
+        if not self._inflight:
+            self._samples.clear()
+            return
+        earliest_start = min(request["start_ts"] for request in self._inflight.values())
+        self._samples = [sample for sample in self._samples if sample.timestamp >= earliest_start]
+
+    def _prune_completed_locked(self) -> None:
+        if self._inflight and all(request["completed"] and request["estimated"] for request in self._inflight.values()):
+            self._inflight.clear()
+            self._samples.clear()
 
     def get_inflight_requests(self) -> dict[str, dict[str, float]]:
         with self._lock:

@@ -59,6 +59,7 @@ def test_selected_arm_is_reported_and_logged(monkeypatch, caplog):
     monkeypatch.setenv("PROMPT_OPT_ENABLED", "true")
     monkeypatch.setenv("PROMPT_OPT_AB_PERCENT", "100")
     monkeypatch.setenv("VLLM_BACKEND_URL", "")
+    monkeypatch.setenv("GREENWAY_LOG_PROMPTS", "true")
     caplog.set_level(logging.INFO)
 
     with TestClient(app) as client:

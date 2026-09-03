@@ -25,8 +25,6 @@ def test_apply_infrastructure_multipliers_chain_matches_exact_value():
 
 
 def test_carbon_engine_prefers_electricitymaps_primary(monkeypatch):
-    engine = CarbonEngine(region="us-east1", provider="google")
-
     class FakeResponse:
         status_code = 200
 
@@ -41,11 +39,12 @@ def test_carbon_engine_prefers_electricitymaps_primary(monkeypatch):
             return False
 
         async def get(self, *args, **kwargs):
+            assert args[0] == "https://api.electricitymap.io/v3/carbon-intensity/latest?zone=US-SC"
             return FakeResponse()
 
     monkeypatch.setenv("ELECTRICITYMAPS_API_KEY", "abc")
     monkeypatch.delenv("WATTTIME_API_KEY", raising=False)
-    monkeypatch.setattr("carbon.carbon_engine.httpx.AsyncClient", lambda timeout=10.0: FakeClient())
+    engine = CarbonEngine(region="us-east1", provider="google", http_client=FakeClient())
 
     value, tier = asyncio.run(engine.refresh_moer_cache())
     assert tier == "electricitymaps"
@@ -53,8 +52,6 @@ def test_carbon_engine_prefers_electricitymaps_primary(monkeypatch):
 
 
 def test_carbon_engine_falls_back_to_watttime(monkeypatch):
-    engine = CarbonEngine(region="us-east1", provider="google")
-
     class FakeResponse:
         status_code = 200
 
@@ -69,11 +66,12 @@ def test_carbon_engine_falls_back_to_watttime(monkeypatch):
             return False
 
         async def get(self, *args, **kwargs):
+            assert args[0] == "https://api.watttime.org/v2/data?ba=SOUTHEAST"
             return FakeResponse()
 
     monkeypatch.delenv("ELECTRICITYMAPS_API_KEY", raising=False)
     monkeypatch.setenv("WATTTIME_API_KEY", "abc")
-    monkeypatch.setattr("carbon.carbon_engine.httpx.AsyncClient", lambda timeout=10.0: FakeClient())
+    engine = CarbonEngine(region="us-east1", provider="google", http_client=FakeClient())
 
     value, tier = asyncio.run(engine.refresh_moer_cache())
     assert tier == "watttime"

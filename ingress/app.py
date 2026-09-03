@@ -5,8 +5,10 @@ import logging
 import os
 import time
 import uuid
+import ipaddress
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator
+from urllib.parse import urlparse
 
 import httpx
 from fastapi import FastAPI, Header, Request
@@ -48,11 +50,41 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         if not application.state.carbon_moer_task.done():
             application.state.carbon_moer_task.cancel()
         application.state.nvml_sampler.stop()
+        await application.state.carbon_engine.close()
         await application.state.http_client.aclose()
         application.state.executor.shutdown(wait=True)
 
 
 app = FastAPI(title="GreenwayAI Gateway", version="0.2.0", lifespan=lifespan)
+
+GEMINI_BACKEND_URL = "https://generativelanguage.googleapis.com/v1beta/openai"
+
+
+def is_remote_backend_url(backend_url: str) -> bool:
+    host = urlparse(backend_url).hostname
+    if not host:
+        return False
+    normalized_host = host.lower().rstrip(".")
+    if normalized_host in {"localhost", "localhost.localdomain"}:
+        return False
+    try:
+        return not ipaddress.ip_address(normalized_host).is_private and normalized_host not in {"0.0.0.0", "::1"}
+    except ValueError:
+        return "." in normalized_host
+
+
+def backend_configuration() -> tuple[str, str, dict[str, str], bool]:
+    configured_mode = os.getenv("GREENWAY_BACKEND_MODE", "").strip().lower()
+    mode = configured_mode or ("vllm" if os.getenv("VLLM_BACKEND_URL", "").strip() else "mock")
+    if mode == "gemini":
+        api_key = os.getenv("GEMINI_API_KEY", "").strip()
+        if not api_key:
+            raise RuntimeError("GEMINI_API_KEY is required when GREENWAY_BACKEND_MODE=gemini")
+        return f"{GEMINI_BACKEND_URL}/chat/completions", "gemini-2.5-flash", {"Authorization": f"Bearer {api_key}"}, True
+    if mode in {"mock", ""}:
+        return "", "", {}, False
+    backend_url = os.getenv("VLLM_BACKEND_URL", "").strip().rstrip("/")
+    return (f"{backend_url}/v1/chat/completions" if backend_url else ""), "", {}, is_remote_backend_url(backend_url)
 
 
 def request_energy_window_start(trace_started: float, pool_acquire_ms: float) -> float:
@@ -110,12 +142,18 @@ async def chat_completions(
         "X-Greenway-Input-Tokens": str(gateway_request.input_tokens),
         "X-Greenway-Prompt-Optimization": optimization_arm,
     }
-    backend_url = os.getenv("VLLM_BACKEND_URL", "").strip().rstrip("/")
+    try:
+        backend_url, backend_model, backend_headers, remote_backend = backend_configuration()
+    except RuntimeError as error:
+        return JSONResponse({"error": {"message": str(error)}}, status_code=503, headers=metadata)
+    if backend_model:
+        gateway_request.raw_payload["model"] = backend_model
     proxy_started = time.perf_counter()
     pool_acquire_ms = 0.0
     round_trip_ms = 0.0
     response_read_ms = 0.0
     output_tokens = 0
+    reported_input_tokens: int | None = None
     energy_kwh: float | None = None
     carbon_gco2e: float | None = None
     moer_kg_per_kwh: float | None = None
@@ -125,7 +163,7 @@ async def chat_completions(
     response_payload: dict[str, Any] = {}
     sampler = getattr(request.app.state, "nvml_sampler", None)
     parametric_estimator = getattr(request.app.state, "parametric_estimator", None)
-    parametric_mode = os.getenv("GREENWAY_ENERGY_MODE", "nvml").strip().lower() == "parametric"
+    parametric_mode = remote_backend or os.getenv("GREENWAY_ENERGY_MODE", "nvml").strip().lower() == "parametric"
     telemetry_source = "unknown"
     if parametric_mode:
         telemetry_source = "parametric_estimated"
@@ -159,9 +197,9 @@ async def chat_completions(
                     logger.warning("NVML request registration failed: %s", error)
             backend_request = request.app.state.http_client.build_request(
                 "POST",
-                f"{backend_url}/v1/chat/completions",
+                backend_url,
                 json=gateway_request.raw_payload,
-                headers={**metadata, "Content-Type": "application/json"},
+                headers={**metadata, **backend_headers, "Content-Type": "application/json"},
             )
             backend_request.extensions["trace"] = trace
             backend_response = await request.app.state.http_client.send(backend_request, stream=True)
@@ -184,10 +222,11 @@ async def chat_completions(
             response_headers = {
                 key: value
                 for key, value in backend_response.headers.items()
-                if key.lower() not in {"content-length", "transfer-encoding", "connection"}
+                if key.lower() not in {"content-length", "transfer-encoding", "connection", "content-encoding"}
             }
             response_headers.update(metadata)
-            response_payload = json.loads(response_body.decode("utf-8")) if response_body else {}
+            decoded_payload = json.loads(response_body.decode("utf-8")) if response_body else {}
+            response_payload = decoded_payload if isinstance(decoded_payload, dict) else {}
             response = Response(
                 content=response_body,
                 status_code=backend_response.status_code,
@@ -195,6 +234,16 @@ async def chat_completions(
             )
     except httpx.HTTPError as error:
         response = JSONResponse({"error": {"message": f"Backend unavailable: {error}"}}, status_code=502, headers=metadata)
+
+    def _reported_usage(payload: dict[str, Any]) -> tuple[int | None, int | None]:
+        usage = payload.get("usage")
+        if not isinstance(usage, dict):
+            return None, None
+        prompt_tokens = usage.get("prompt_tokens")
+        completion_tokens = usage.get("completion_tokens")
+        if not isinstance(prompt_tokens, int) or not isinstance(completion_tokens, int):
+            return None, None
+        return prompt_tokens, completion_tokens
 
     def _count_response_tokens(payload: dict[str, Any]) -> int:
         choices = payload.get("choices", [])
@@ -215,21 +264,24 @@ async def chat_completions(
         return 0
 
     if response_payload:
-        output_tokens = await asyncio.to_thread(_count_response_tokens, response_payload)
+        reported_input_tokens, reported_output_tokens = _reported_usage(response_payload)
+        output_tokens = (
+            reported_output_tokens
+            if reported_output_tokens is not None
+            else await asyncio.to_thread(_count_response_tokens, response_payload)
+        )
+        input_tokens = reported_input_tokens if reported_input_tokens is not None else gateway_request.input_tokens or 0
         if parametric_mode and parametric_estimator is not None:
             estimate = parametric_estimator.estimate(
                 model=str(gateway_request.raw_payload.get("model", "unknown")),
-                input_tokens=gateway_request.input_tokens or 0,
+                input_tokens=input_tokens,
                 output_tokens=output_tokens,
             )
             energy_kwh = estimate.energy_kwh
             energy_source_tier = estimate.energy_source_tier
         else:
             if hardware_energy_kwh is not None:
-                energy_kwh = estimate_energy_kwh(
-                    input_tokens=gateway_request.input_tokens or 0,
-                    output_tokens=output_tokens,
-                ) + hardware_energy_kwh
+                energy_kwh = hardware_energy_kwh
         if os.getenv("GREENWAY_CARBON_DISABLED", "false").strip().lower() == "true":
             moer_kg_per_kwh = request.app.state.carbon_engine._get_static_moer()
             carbon_source_tier = "static_fallback"
@@ -246,6 +298,7 @@ async def chat_completions(
         else:
             carbon_source_tier = "unavailable"
         proxy_ms = (time.perf_counter() - proxy_started) * 1000
+        response.headers["X-Greenway-Input-Tokens"] = str(input_tokens)
         response.headers["X-Greenway-Output-Tokens"] = str(output_tokens)
         response.headers["X-Greenway-Energy-kWh"] = str(round(energy_kwh, 12)) if energy_kwh is not None else "null"
         response.headers["X-Greenway-Carbon-gCO2e"] = str(round(carbon_gco2e, 12)) if carbon_gco2e is not None else "null"
@@ -262,10 +315,12 @@ async def chat_completions(
         logger.info(json.dumps({
             "request_id": gateway_request.request_id,
             "content_hash": gateway_request.content_hash,
-            "input_tokens": gateway_request.input_tokens,
+            "input_tokens": input_tokens,
             "prompt_optimization_arm": optimization_arm,
-            "original_prompt": original_prompt,
-            "optimized_prompt": optimized_prompt,
+            **({
+                "original_prompt": original_prompt,
+                "optimized_prompt": optimized_prompt,
+            } if os.getenv("GREENWAY_LOG_PROMPTS", "false").strip().lower() == "true" else {}),
             "original_input_tokens": optimized_tokens if optimization_arm == "baseline" else optimization_result.original_tokens,
             "optimized_input_tokens": optimized_tokens,
             "prompt_optimization_changes": list(optimization_changes),

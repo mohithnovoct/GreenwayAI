@@ -2,18 +2,19 @@
 
 | Phase | Claim | Current evidence | Status |
 |---|---|---|---|
-| 3 | Green prompt engineering reduces energy/carbon through shorter, equally useful real-model outputs. | Pipeline and carbon formula are verified; the adaptive mock's shorter-output result is scripted simulation only. Real-model output length, quality, and avoided re-prompts remain untested. | Partially validated; real-model validation blocked |
+| 3 | Green prompt engineering reduces energy/carbon through shorter, equally useful real-model outputs. | Gemini returned real text and API usage fields, but the partial sample was truncated and the project dashboard shows Gemini 2.5 Flash at 21/20 RPD and 8/5 RPM. Compliance-gated 256-token A/B evidence could not be collected. | Partially validated; quota-blocked |
 
 ## Phase 3 validation state
 
 The optimizer, A/B routing, audit logging, token accounting, and telemetry
-plumbing are implemented and covered by tests. The corrected adaptive-mock run
-used realistic prompts and counterbalanced 1000-request arms, but its 96-to-27
-output-token reduction is hardcoded by `mock_backend.py` when an optimizer
-constraint phrase is present. It must not be presented as evidence for the
-paper's causal claim.
+plumbing are implemented and covered by tests. Gemini mode captures the API's
+own `usage.prompt_tokens` and `usage.completion_tokens` rather than using the
+local tokenizer estimate when those fields are present. A live counterbalanced
+run with a compliance check is still required before making the causal claim.
 
 This environment has no configured hosted-model credential, and the local vLLM
-service is disabled because the container has no GPU. A real-model test remains
-open pending access to a small hosted endpoint or a GPU-backed local deployment.
-Phase 3 should not close on mock-backend evidence alone.
+service is disabled because the container has no GPU. Phase 3 should not close
+on mock-backend evidence alone. The current finding is that real Gemini calls
+work and usage is captured, but the optimizer's persona/format compliance and
+energy effect remain unvalidated because the actual project quota was
+exhausted.

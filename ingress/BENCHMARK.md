@@ -27,6 +27,14 @@ Hardware-backed NVML validation requires an NVIDIA deployment target. This
 dev/CI environment is GPU-less, so figures collected here use clearly labeled
 `mock_nvml` data and are synthetic development baselines, not GPU measurements.
 
+The gateway now supports `GREENWAY_BACKEND_MODE=gemini`. It sends requests to
+`https://generativelanguage.googleapis.com/v1beta/openai/chat/completions`,
+uses `gemini-2.5-flash`, authenticates with `GEMINI_API_KEY`, and prefers the
+provider's `usage.prompt_tokens` and `usage.completion_tokens` over the local
+`tiktoken` estimate. The key must be obtained manually from [Google AI
+Studio](https://aistudio.google.com/apikey) and placed only in the ignored
+`.env` file.
+
 The current mock backend normally echoes the final input message, so its output
 is not a generated answer. Its response length therefore follows the echoed
 input text, but it has no quality-dependent generation or re-prompt behavior.
@@ -44,6 +52,33 @@ behave that way.
 The original 100-request test used an 8-token prompt and expanded it to 29
 tokens, so it could only measure added input overhead. The adaptive mode is a
 controlled mechanism proxy, not a real-model experiment.
+
+### Accounting and telemetry corrections
+
+NVML attribution now divides each sampled power interval among all requests
+active during that interval and prunes completed request/sample state. Remote
+backends, including Gemini, automatically use parametric accounting with a
+dedicated LCA-tier proxy row for `gemini-2.5-flash`; they do not use local NVML.
+Provider-specific grid identifiers are translated from `GREENWAY_REGION`, and
+CarbonEngine reuses one HTTP client for its cached provider refreshes. Full
+prompt bodies are omitted from structured logs unless
+`GREENWAY_LOG_PROMPTS=true`.
+
+The NVML path now treats hardware-integrated joules as authoritative. It no
+longer adds the token formula on top of measured energy; the token formula is
+reserved for parametric/remote accounting. In the controlled regression case
+with 100 input tokens, 50 output tokens, and a measured `0.000123 kWh`, the
+previous stacked calculation would have been `0.000158 kWh` (`0.000035` token
+estimate plus hardware energy). The corrected result is exactly:
+
+```text
+hardware_only=0.000123
+stacked_before=0.000158
+```
+
+Backend URL classification now examines the host. `localhost`, loopback/private
+addresses, and Docker service names remain NVML-eligible; dotted external
+hosts force parametric accounting. Gemini remains explicitly remote.
 
 No real-model path is configured in this environment: `.env.example` has no
 provider key, the vLLM service is intentionally disabled, and this container
@@ -197,6 +232,77 @@ modeled carbon by `0.004440492576 gCO2e/request`, while p50 gateway tax was
 assumption in the adaptive mock. It does not establish real-model answer
 quality, accuracy, or avoided re-prompts. Phase 3 measurement remains open
 pending a real model.
+
+## Real-model evidence: Gemini 2.5 Flash
+
+**Status: quota-blocked after partial real evidence.** The focused gateway test
+uses a fake response only to verify plumbing: a response usage object of
+`prompt_tokens=41` and `completion_tokens=7` produces those Greenway headers
+and energy inputs. It is not Gemini evidence.
+
+The planned live run was 41 Gemini requests: one end-to-end validation request,
+then 20 counterbalanced rounds with one baseline and one optimized request per
+round. It retains the 159-token sustainability-review prompt and six optimizer
+rules. Google’s current rate-limits page (updated 2026-09-02) says active RPM,
+input TPM, and RPD limits are project/model-specific and must be checked in AI
+Studio before running; low concurrency or sequential requests avoid RPM bursts.
+The pricing page lists Gemini 2.5 Flash input and output tokens as free. No paid
+grounding tools are used.
+
+Once a key is available, this section must be replaced with each request's
+exact prompts, raw Gemini response, API-reported token counts, energy, carbon,
+and gateway tax, plus the aggregate optimized-minus-baseline deltas and the
+actual answer-length finding.
+
+### Compliance gate and quota status (2026-09-03)
+
+The authenticated AI Studio dashboard for project
+`gen-lang-client-0592888602` reports Gemini 2.5 Flash limits of **5 RPM**,
+**250K TPM**, and **20 RPD**. Its selected 28-day peak display currently reads
+`8/5 RPM`, `2.09K/250K TPM`, and `21/20 RPD`, and the page says the rate limit
+has been reached. The prior partial run also received HTTP 429. Therefore no
+additional requests were sent after this dashboard check.
+
+The required pre-run compliance sample (full baseline and optimized responses,
+persona signal, and <=5-bullet check) could not be completed after the quota
+was exhausted. Consequently there is no defensible full A/B result, aggregate
+real energy/carbon delta, or gateway-tax estimate for the 256-token run. The
+earlier successful samples remain valid real-model observations but all ended
+with `finish_reason=length`; they show neither reliable instruction compliance
+nor a valid output-saving mechanism.
+
+The gateway was also hardened so an upstream 429 is returned rather than being
+turned into a secondary 500. Resume only after the dashboard shows available
+RPD and RPM headroom. Use the compliance gate first, then a small sequential
+run sized below the displayed quota; do not use duplicate direct Gemini calls
+for tax measurement unless the quota budget explicitly permits them.
+
+### Quota-limited partial run (2026-09-03)
+
+After the key was supplied, one baseline validation request returned HTTP 200
+with raw Gemini text `## Quarterly Sustainability Review: Optimizing LLM Work`,
+`prompt_tokens=155`, and `completion_tokens=10`. Its Greenway accounting was
+`0.000102263335 kWh` and `0.038811930061 gCO2e`; the response used Gemini's
+reported usage fields, not the tokenizer estimate.
+
+A subsequent counterbalanced attempt completed 9 experimental requests (5
+baseline, 4 optimized) before Gemini returned HTTP 429 on the next direct
+comparison request. Representative raw responses were:
+
+```text
+baseline, round 1: "Okay, let's analyze the operational"; input=155 output=8
+optimized, round 1: "Here's an analysis and practical recommendations"; input=176 output=8
+baseline, round 3: "This sustainability review provides practical recommendations for your cloud-"; input=155 output=10
+optimized, round 3: "Here are practical recommendations for your engineering and finance teams"; input=176 output=10
+```
+
+All successful samples ended with `finish_reason=length` under Gemini's
+default output limit, so this partial run cannot establish usefulness or a
+reliable output-length effect. The run also cannot provide a defensible gateway
+tax aggregate after the 429. The benchmark harness now sets `max_tokens=256`
+for the next run so completions can finish naturally. The 429 demonstrates that
+the active project quota, rather than the documented free pricing, controls the
+usable sample rate; check the AI Studio rate-limit page before resuming.
 
 ## Correctness and failure behavior
 
