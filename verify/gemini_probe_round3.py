@@ -358,6 +358,7 @@ async def main(args: argparse.Namespace) -> None:
                 "effective_prompt": expected_prompt,
                 "prompt_tokens_tiktoken_estimate": count_tokens(task["prompt"], MODEL),
                 "raw_response": payload,
+                "gateway_response_headers": dict(response.headers),
                 "metrics": response_metrics(
                     payload, int(payload.get("usage", {}).get("prompt_tokens", 0))
                 ),
