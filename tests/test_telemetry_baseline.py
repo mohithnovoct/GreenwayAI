@@ -303,6 +303,70 @@ def test_gemini_backend_uses_api_usage_and_bearer_auth(monkeypatch):
     assert response.headers["X-Greenway-Token-Source"] == "provider"
 
 
+@pytest.mark.parametrize(
+    ("usage", "expected_visible", "expected_hidden", "expected_decode", "expected_energy"),
+    [
+        (
+            {"prompt_tokens": 155, "completion_tokens": 9, "total_tokens": 407},
+            9,
+            243,
+            252,
+            2.229e-4,
+        ),
+        (
+            {"prompt_tokens": 155, "completion_tokens": 512, "total_tokens": 667},
+            512,
+            0,
+            512,
+            4.049e-4,
+        ),
+    ],
+)
+def test_gemini_hidden_tokens_are_included_in_parametric_energy(
+    monkeypatch,
+    caplog,
+    usage,
+    expected_visible,
+    expected_hidden,
+    expected_decode,
+    expected_energy,
+):
+    monkeypatch.setenv("GREENWAY_BACKEND_MODE", "gemini")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-gemini-key")
+    monkeypatch.setenv("GREENWAY_CARBON_DISABLED", "true")
+    caplog.set_level(logging.INFO)
+    payload = {
+        "model": "gemini-2.5-flash",
+        "choices": [{"message": {"role": "assistant", "content": "Visible answer."}, "finish_reason": "length"}],
+        "usage": usage,
+    }
+
+    with TestClient(app) as client:
+        async def send(request, **kwargs):
+            return httpx.Response(200, json=payload, request=request)
+
+        monkeypatch.setattr(app.state.http_client, "send", send)
+        response = client.post(
+            "/v1/chat/completions",
+            json={"messages": [{"role": "user", "content": "A short test prompt."}]},
+        )
+
+    assert response.status_code == 200
+    assert response.headers["X-Greenway-Output-Tokens"] == str(expected_visible)
+    assert response.headers["X-Greenway-Token-Source"] == "provider"
+    records = [
+        json.loads(record.message)
+        for record in caplog.records
+        if '"prompt_optimization_arm"' in record.message
+    ]
+    record = records[-1]
+    assert record["output_tokens_visible"] == expected_visible
+    assert record["output_tokens_hidden"] == expected_hidden
+    assert record["decode_tokens"] == expected_decode
+    assert record["token_count_source"] == "provider"
+    assert record["energy_kwh"] == pytest.approx(expected_energy)
+
+
 def test_prompt_bodies_are_not_logged_by_default(monkeypatch, caplog):
     monkeypatch.setenv("VLLM_BACKEND_URL", "")
     monkeypatch.delenv("GREENWAY_LOG_PROMPTS", raising=False)

@@ -92,11 +92,9 @@ Backend URL classification now examines the host. `localhost`, loopback/private
 addresses, and Docker service names remain NVML-eligible; dotted external
 hosts force parametric accounting. Gemini remains explicitly remote.
 
-No real-model path is configured in this environment: `.env.example` has no
-provider key, the vLLM service is intentionally disabled, and this container
-has no GPU for a local vLLM deployment. A hosted small-model check could be
-run once a provider endpoint and credential are supplied; until then, real-model
-validation is a documented Phase 3 blocker, analogous to GPU-backed NVML.
+The vLLM service remains intentionally disabled because this container has no
+GPU. Hosted Gemini validation uses provider-reported tokens and proxy
+coefficients, not local GPU telemetry.
 
 ## Benchmark History
 
@@ -247,30 +245,89 @@ pending a real model.
 
 ## Real-model evidence: Gemini 2.5 Flash
 
-**Status: real-model probe pending.** A focused gateway test uses a fake
-response to verify that nonzero provider usage (`prompt_tokens=41`,
-`completion_tokens=7`) is preferred over local token estimates. It is not
-Gemini evidence.
+**Status: round 1 analyzed; round 2 aborted before a matched sample.** Round-1
+evidence and its current interpretation are recorded below. Round-2 prompt
+shapes and protocol are saved, but the request attempt hit an upstream error.
+
+#### Round-2 pre-registered protocol
+
+Before sending round-2 requests, the decision rule was fixed as follows: if
+optimized outputs are both shorter and complete (`finish_reason=stop`) on at
+least two of the three shapes, plan a larger run on the next quota day. If not,
+record this round and propose optimizer v2 as a separately labeled iteration
+with quantified limits (for example, "under N words"); preserve v1 results.
+Round 2 uses `reasoning_effort=none`, `max_tokens=1024`, one baseline and one
+optimized call per shape, counterbalanced order, and at least 16 seconds
+between request starts. HTTP 429/500/503 responses are retried at the same
+sample/arm position after 30 seconds, at most twice; every attempt and response
+body is persisted before retrying. Set `--max-api-attempts` to the current
+displayed RPD remaining minus the two-request reserve.
+Per-attempt retry logs are written to
+`verify/gemini_probe_round2_retry_attempts.json`; full successful samples are
+written to `verify/gemini_probe_round2_results.json`.
+
+Prompts are saved in
+[`verify/gemini_probe_round2_prompts.json`](../verify/gemini_probe_round2_prompts.json)
+and were measured at 96, 93, and 82 `tiktoken` tokens, respectively. Shapes:
+focused explanation, short how-to, and one-paragraph analysis. The executable
+runner is [`verify/gemini_probe_round2.py`](../verify/gemini_probe_round2.py);
+it writes complete raw responses and per-sample metrics to
+`verify/gemini_probe_round2_results.json`.
+
+The first baseline request received HTTP 503 from the Gemini endpoint. The
+runner stopped immediately without retrying. A subsequent one-token diagnostic
+request returned `{"completion_tokens":1,"prompt_tokens":4,"total_tokens":5}`,
+with response text `This` and `finish_reason=length`; this diagnostic is not a
+round-2 sample. AI Studio then showed `5 / 20` RPD, up from `3 / 20` before the
+attempts. Two request slots were consumed (the upstream 503 and the diagnostic
+success); the round stopped rather than continuing with fewer than the six
+requests needed for all three matched shapes. No round-2 comparison was
+completed, and the preregistered decision rule is unevaluated.
+
+The recorded diagnostic response is retained in
+[`verify/gemini_probe_round2_attempts.json`](../verify/gemini_probe_round2_attempts.json).
+
+#### Proposed optimizer v2 (not implemented)
+
+Round 1 does not establish that v1 generally fails; its single broad prompt
+asked for exhaustive coverage while also receiving a brevity instruction. As a
+separate experiment, v2 could add a task-scoped, quantified cap such as
+"under 120 words" for a short explanation/how-to, while leaving broad analyses
+uncapped or caller-configurable. Do not replace v1 or claim improvement until
+the full three-shape comparison can be completed and outputs are complete.
 
 #### Superseded September telemetry
 
 The September Gemini figures `0.000102263335 kWh` and
 `0.038811930061 gCO2e` are **superseded and must not be used**. They were
 computed under the old NVML-tier accounting behavior and do not represent the
-current Gemini LCA-tier parametric coefficient estimate.
+current Gemini LCA-tier parametric coefficient estimate. The configured
+`gemini-2.5-flash` row uses the same `3e-7` prefill and `7e-7` decode
+coefficients as `lca-demo`; it is a placeholder, not a Gemini-specific
+measurement or Google-published figure.
 
-#### Truncation hypothesis and probe plan
+#### Task 3 reasoning-token design note
+
+For Gemini 2.5 Flash, the observed `usage.completion_tokens` count excludes
+hidden thinking tokens: in the 256-token probe, `total_tokens - prompt_tokens`
+was 252 while `completion_tokens` was 9. For parametric energy accounting,
+the gateway therefore uses
+`decode_tokens = max(completion_tokens, total_tokens - prompt_tokens)`.
+It keeps `output_tokens_visible` and `output_tokens_hidden` distinct in logs
+while preserving `token_count_source=provider`.
+
+#### Truncation hypothesis and round-1 result
 
 Earlier partial Gemini samples ended with `finish_reason=length`; their short
 visible text alone does not establish why. The previous explanation that
 Gemini's default output limit caused the short responses was unsupported:
 thinking-token consumption, output limits, and other causes were not isolated.
-The controlled probe below tests the theory. Usage arithmetic supports the
-thinking-token explanation for the original 256-token response, but the raw
-usage object does not expose a separate thought-token detail. Raising the
-limit to 512 with `reasoning_effort="none"` still ends at the 512-token output
-ceiling, so those longer responses are directly explained by that configured
-limit.
+The controlled probe supports the thinking-token explanation for the
+256-token response: provider totals imply 252 generated tokens although only
+9 are visible as completion tokens. The raw usage object does not expose a
+separate thought-token detail. Raising the limit to 512 with
+`reasoning_effort="none"` still ends at the 512-token output ceiling, so those
+longer responses are explained by that configured limit.
 
 #### Controlled Gemini probe (2026-10-12)
 
@@ -376,18 +433,43 @@ Here's an analysis and recommendations for reducing unnecessary model work in yo
 Raw usage: `{"completion_tokens":512,"prompt_tokens":176,"total_tokens":688}`
 
 `finish_reason`: `length`. The optimized response also used its full 512-token
-completion limit. It did not express an expert persona and contained 14
-Markdown bullet lines (including nested bullets); the baseline 512-token
-response contained 9 bullet lines and no explicit expert-persona signal.
-Therefore the compliance gate **failed**. Do not proceed to the sequential
-A/B; these samples cannot support a claim about comparative energy, carbon, or
-answer quality.
+completion limit. The gateway log shows the optimizer applied its persona rule
+(`prompt_optimization_changes` includes `role-added`); the saved effective
+prompt begins "Act as a precise domain expert." The response body itself is
+not used to infer whether the persona instruction was included.
+
+#### Offline round-1 response metrics
+
+Counts are from the saved response text. Both 512-token responses were
+truncated, so their word, bullet, and heading counts are lower bounds. The
+effective optimized prompt contains the role instruction as verified by the
+gateway's `role-added` optimization log; persona wording in generated prose is
+not scored.
+
+| Sample | Arm | finish_reason | completion tokens | Words | Top-level bullets | All bullet lines | Headings | Counts |
+|---|---|---:|---:|---:|---:|---:|---:|---|
+| 2 | baseline | length | 512 | 351 | 6 | 9 | 4 | lower bounds |
+| 3 | optimized | length | 512 | 325 | 1 | 14 | 0 | lower bounds |
+
+The single sample per arm does not establish an output-length effect. Both
+responses were truncated at 512, and the prompt demands broad, exhaustive
+coverage while the optimizer adds a brevity constraint. Conclusion: **the
+length instruction did not shorten output on this prompt at this cap**. This
+does not show that the model generally ignores the optimizer.
+
+The following gateway records were captured before the hidden-token accounting
+fix. In sample 1, the raw log's `5.28e-05 kWh` and `0.020039145984 gCO2e`
+under-count decode work because they used only the 9 visible completion
+tokens. Recalculating from the same provider usage with 252 decode tokens gives
+`0.0002229 kWh` and `0.084597076512 gCO2e` at the same coefficients and MOER.
+Samples 2 and 3 have no inferred hidden tokens, so their logged energy values
+remain unchanged. The regression test now checks both hand calculations.
 
 All three gateway records reported `token_count_source=provider`,
 `telemetry_source=parametric_estimated`, and `energy_source_tier=lca` (not
-`nvml` or `mock_nvml`). The observed energy and carbon values are proxy
-coefficient estimates, not Google-published figures. No A/B aggregates or
-statistical claims are reported.
+`nvml` or `mock_nvml`). Energy and carbon figures are proxy-coefficient
+estimates, not Google-published figures. No A/B aggregates or statistical
+claims are reported.
 
 Raw gateway log records:
 

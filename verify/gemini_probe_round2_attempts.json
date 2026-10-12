@@ -1,0 +1,55 @@
+{
+  "round_status": "aborted_before_matched_samples",
+  "quota_before": {
+    "rpd": "3 / 20",
+    "rpm": "3 / 5",
+    "tpm": "770 / 250K"
+  },
+  "quota_after": {
+    "rpd": "5 / 20",
+    "rpm": "3 / 5",
+    "tpm": "770 / 250K"
+  },
+  "attempts": [
+    {
+      "kind": "planned_shape_request",
+      "shape": "focused_explanation",
+      "arm": "baseline",
+      "model": "gemini-2.5-flash",
+      "reasoning_effort": "none",
+      "max_tokens": 1024,
+      "gateway_status": 503,
+      "upstream_status": 503,
+      "response_body": "Not captured by runner; gateway log confirms HTTP/1.1 503 Service Unavailable from generativelanguage.googleapis.com."
+    },
+    {
+      "kind": "diagnostic_request_not_in_experiment",
+      "model": "gemini-2.5-flash",
+      "prompt": "health probe only",
+      "reasoning_effort": "none",
+      "max_tokens": 1,
+      "raw_response": {
+        "choices": [
+          {
+            "finish_reason": "length",
+            "index": 0,
+            "message": {
+              "content": "This",
+              "role": "assistant"
+            }
+          }
+        ],
+        "created": 1791785993,
+        "id": "CHzMaur7Hb3Hg8UPqrzM0QE",
+        "model": "gemini-2.5-flash",
+        "object": "chat.completion",
+        "usage": {
+          "completion_tokens": 1,
+          "prompt_tokens": 4,
+          "total_tokens": 5
+        }
+      }
+    }
+  ],
+  "conclusion": "Two API attempts occurred, including one successful diagnostic request, so round 2 stopped rather than continue with an incomplete paired design. No prompt-shape comparison was completed."
+}

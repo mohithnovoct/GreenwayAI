@@ -18,7 +18,7 @@
     },
     "gemini-2.5-flash": {
       "tier": "lca",
-      "source": "LCA-tier proxy estimate; Google does not publish a model-specific energy figure",
+      "source": "Placeholder: same coefficients as lca-demo; not a Gemini-specific measurement",
       "prefill_kwh_per_input_token": 3.0e-7,
       "decode_kwh_per_output_token": 7.0e-7
     }

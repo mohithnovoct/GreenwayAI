@@ -7,8 +7,8 @@ from dataclasses import dataclass
 class EnergyModel:
     """Simple kWh/token model for baseline and parametric carbon accounting.
 
-    The decode term covers all generated output tokens, including any future
-    reasoning-chain tokens that are returned as part of the response body.
+    The decode term includes generated tokens not visible in response text when
+    provider usage totals expose them, as with Gemini thinking-token accounting.
     """
 
     prefill_coeff: float = 1.5e-7

@@ -153,6 +153,8 @@ async def chat_completions(
     round_trip_ms = 0.0
     response_read_ms = 0.0
     output_tokens = 0
+    output_tokens_hidden = 0
+    decode_tokens = 0
     reported_input_tokens: int | None = None
     energy_kwh: float | None = None
     carbon_gco2e: float | None = None
@@ -238,17 +240,21 @@ async def chat_completions(
     except httpx.HTTPError as error:
         response = JSONResponse({"error": {"message": f"Backend unavailable: {error}"}}, status_code=502, headers=metadata)
 
-    def _reported_usage(payload: dict[str, Any]) -> tuple[int | None, int | None]:
+    def _reported_usage(payload: dict[str, Any]) -> tuple[int | None, int | None, int | None]:
         usage = payload.get("usage")
         if not isinstance(usage, dict):
-            return None, None
+            return None, None, None
         prompt_tokens = usage.get("prompt_tokens")
         completion_tokens = usage.get("completion_tokens")
         if not isinstance(prompt_tokens, int) or not isinstance(completion_tokens, int):
-            return None, None
+            return None, None, None
+        total_tokens = usage.get("total_tokens")
+        if not isinstance(total_tokens, int) or total_tokens < 0:
+            total_tokens = None
         return (
             prompt_tokens if prompt_tokens > 0 else None,
             completion_tokens if completion_tokens > 0 else None,
+            total_tokens,
         )
 
     def _count_response_tokens(payload: dict[str, Any]) -> int:
@@ -270,7 +276,7 @@ async def chat_completions(
         return 0
 
     if response_payload:
-        reported_input_tokens, reported_output_tokens = _reported_usage(response_payload)
+        reported_input_tokens, reported_output_tokens, reported_total_tokens = _reported_usage(response_payload)
         estimated_input_tokens = gateway_request.input_tokens or 0
         estimated_output_tokens = await asyncio.to_thread(_count_response_tokens, response_payload)
         output_tokens = (
@@ -278,6 +284,10 @@ async def chat_completions(
             if reported_output_tokens is not None
             else estimated_output_tokens
         )
+        decode_tokens = output_tokens
+        if reported_input_tokens is not None and reported_output_tokens is not None and reported_total_tokens is not None:
+            decode_tokens = max(output_tokens, reported_total_tokens - reported_input_tokens)
+        output_tokens_hidden = decode_tokens - output_tokens
         input_tokens = reported_input_tokens if reported_input_tokens is not None else estimated_input_tokens
         token_count_source = (
             "provider"
@@ -290,7 +300,7 @@ async def chat_completions(
             estimate = parametric_estimator.estimate(
                 model=str(gateway_request.raw_payload.get("model", "unknown")),
                 input_tokens=input_tokens,
-                output_tokens=output_tokens,
+                output_tokens=decode_tokens,
             )
             energy_kwh = estimate.energy_kwh
             energy_source_tier = estimate.energy_source_tier
@@ -342,6 +352,9 @@ async def chat_completions(
             "optimized_input_tokens": optimized_tokens,
             "prompt_optimization_changes": list(optimization_changes),
             "output_tokens": output_tokens,
+            "output_tokens_visible": output_tokens,
+            "output_tokens_hidden": output_tokens_hidden,
+            "decode_tokens": decode_tokens,
             "energy_kwh": round(energy_kwh, 12) if energy_kwh is not None else None,
             "carbon_gco2e": round(carbon_gco2e, 12) if carbon_gco2e is not None else None,
             "moer_kg_per_kwh": round(moer_kg_per_kwh, 12) if moer_kg_per_kwh is not None else None,

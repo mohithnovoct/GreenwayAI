@@ -1,0 +1,14 @@
+[
+  {
+    "shape": "focused_explanation",
+    "prompt": "Explain why an API should use idempotency keys for requests that may be retried. Define an idempotency key, describe what the server stores and for how long at a high level, and distinguish a safe retry from a duplicated side effect. Assume the reader knows HTTP methods but has not designed a payment or job-submission endpoint. Use one brief example to illustrate the failure mode and the fix. Keep the explanation focused on request handling rather than implementation code."
+  },
+  {
+    "shape": "short_how_to",
+    "prompt": "Give a practical checklist for adding request timeouts and retries to a Python service that calls an external API. Cover choosing connect and read timeouts, retrying only transient failures, exponential backoff with jitter, honoring Retry-After, bounding total attempts, and avoiding retries for non-idempotent operations unless protected by an idempotency key. Include one monitoring signal that would reveal misconfiguration. Assume the service uses httpx and runs in production. Do not provide code."
+  },
+  {
+    "shape": "one_paragraph_analysis",
+    "prompt": "A customer-facing API's median latency stayed flat, but its 95th percentile doubled after a new dependency was introduced. Analyze two plausible causes, name the first two measurements you would collect to locate the delay, and recommend one low-risk mitigation while investigating. State one caveat that could make those measurements misleading. Preserve correctness and avoid speculative tuning. Answer as a short one-paragraph assessment rather than a checklist."
+  }
+]

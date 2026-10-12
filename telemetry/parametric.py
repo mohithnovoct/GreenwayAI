@@ -49,8 +49,7 @@ class ParametricEnergyEstimator:
             tier = str(configured["tier"])
             prefill_coeff, decode_coeff = self._validate_coefficients(configured, tier)
 
-        # Any generated text, including reasoning output handled by a future backend,
-        # is counted in output_tokens and therefore consumes the decode term.
+        # The gateway passes Gemini's inferred decode count, including hidden thinking tokens.
         energy_kwh = estimate_energy_kwh(
             input_tokens=input_tokens,
             output_tokens=output_tokens,
