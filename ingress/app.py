@@ -141,6 +141,7 @@ async def chat_completions(
         "X-Greenway-Content-Hash": gateway_request.content_hash or "",
         "X-Greenway-Input-Tokens": str(gateway_request.input_tokens),
         "X-Greenway-Prompt-Optimization": optimization_arm,
+        "X-Greenway-Prompt-Optimization-Changes": ",".join(optimization_changes),
     }
     try:
         backend_url, backend_model, backend_headers, remote_backend = backend_configuration()

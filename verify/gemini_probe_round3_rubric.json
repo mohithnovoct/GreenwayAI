@@ -1,0 +1,54 @@
+{
+  "focused_explanation": [
+    {
+      "id": "definition",
+      "criterion": "Defines an idempotency key as a request identifier used to recognize the same logical operation across retries."
+    },
+    {
+      "id": "stored_data",
+      "criterion": "Identifies what the server stores for the key, such as the request outcome or original response."
+    },
+    {
+      "id": "retention",
+      "criterion": "Explains that the stored key/result is retained for a limited period or until expiration."
+    },
+    {
+      "id": "retry_vs_duplicate",
+      "criterion": "Distinguishes a safe retry that avoids repeating the operation from a retry that causes a duplicate side effect."
+    },
+    {
+      "id": "example",
+      "criterion": "Gives an example showing the failure mode and how an idempotency key fixes it."
+    }
+  ],
+  "short_how_to": [
+    {
+      "id": "connect_and_read_timeouts",
+      "criterion": "Covers choosing both connect and read timeouts."
+    },
+    {
+      "id": "transient_failures",
+      "criterion": "Limits retries to transient failures."
+    },
+    {
+      "id": "backoff_jitter",
+      "criterion": "Covers exponential backoff with jitter."
+    },
+    {
+      "id": "retry_after",
+      "criterion": "Covers honoring the Retry-After response header."
+    },
+    {
+      "id": "attempt_bound",
+      "criterion": "Covers bounding the total number of attempts."
+    },
+    {
+      "id": "non_idempotent_safety",
+      "criterion": "Says non-idempotent operations must not be retried unless protected by an idempotency key."
+    },
+    {
+      "id": "monitoring_signal",
+      "criterion": "Names a monitoring signal that could reveal retry misconfiguration."
+    }
+  ]
+}

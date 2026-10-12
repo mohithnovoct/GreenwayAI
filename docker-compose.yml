@@ -14,6 +14,9 @@ services:
       VLLM_BACKEND_URL: ${VLLM_BACKEND_URL:-http://mock-backend:8001}
       OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: http://otel-collector:4318/v1/metrics
       PROMPT_OPT_ENABLED: "false"
+      PROMPT_OPT_AB_PERCENT: "100"
+      PROMPT_OPT_WORD_CAP: ${PROMPT_OPT_WORD_CAP:-150}
+      PROMPT_OPT_COMBINE_VARIATIONS: ${PROMPT_OPT_COMBINE_VARIATIONS:-false}
     ports:
       - "8000:8000"
     depends_on:
@@ -37,6 +40,9 @@ services:
       VLLM_BACKEND_URL: ${VLLM_BACKEND_URL:-http://mock-backend:8001}
       OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: http://otel-collector:4318/v1/metrics
       PROMPT_OPT_ENABLED: "true"
+      PROMPT_OPT_AB_PERCENT: "100"
+      PROMPT_OPT_WORD_CAP: ${PROMPT_OPT_WORD_CAP:-150}
+      PROMPT_OPT_COMBINE_VARIATIONS: ${PROMPT_OPT_COMBINE_VARIATIONS:-false}
     ports:
       - "8002:8000"
     depends_on:

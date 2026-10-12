@@ -19,10 +19,14 @@ DEFAULT_JARGON = {
     "vLLM": "vLLM language model serving engine",
 }
 
-_ROLE_PATTERN = re.compile(r"\b(as an?|you are|act as|role|persona|expert in)\b", re.IGNORECASE)
-_LENGTH_PATTERN = re.compile(
-    r"\b\d+\s*(?:words?|sentences?|bullets?|items?|points?|characters?)\b|"
-    r"\b(?:brief|concise|short|detailed|length|limit|under|maximum|max|min(?:imum)?)\b",
+_ROLE_PATTERN = re.compile(
+    r"\b(?:you are|act as|role|persona|expert in)\b|"
+    r"\bas an? (?:[\w-]+\s+){0,3}(?:expert|specialist|professional|engineer|developer|analyst)\b",
+    re.IGNORECASE,
+)
+_WORD_CAP_PATTERN = re.compile(
+    r"\b(?:under|below|less than|at most|no more than|within)\s+\d+\s+words?\b|"
+    r"\b\d+\s+words?\b",
     re.IGNORECASE,
 )
 _VARIATION_PATTERN = re.compile(
@@ -86,13 +90,35 @@ def _replace_jargon(text: str) -> tuple[str, bool]:
     return result, changed
 
 
+def _configured_word_cap() -> int:
+    configured = os.getenv("PROMPT_OPT_WORD_CAP", "150").strip()
+    try:
+        word_cap = int(configured)
+    except ValueError as error:
+        raise ValueError("PROMPT_OPT_WORD_CAP must be a positive integer") from error
+    if word_cap <= 0:
+        raise ValueError("PROMPT_OPT_WORD_CAP must be a positive integer")
+    return word_cap
+
+
+def _combine_variations_enabled() -> bool:
+    return os.getenv("PROMPT_OPT_COMBINE_VARIATIONS", "false").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 def _optimize_text(text: str, *, structured_output: bool) -> tuple[str, list[str]]:
     changes: list[str] = []
     optimized, jargon_changed = _replace_jargon(text)
     if jargon_changed:
         changes.append("jargon-expanded")
 
-    if _VARIATION_PATTERN.search(optimized) and (_ITERATION_PATTERN.search(optimized) or "all" not in optimized.lower()):
+    if _combine_variations_enabled() and _VARIATION_PATTERN.search(optimized) and (
+        _ITERATION_PATTERN.search(optimized) or "all" not in optimized.lower()
+    ):
         optimized = f"{optimized.rstrip()} Provide all requested variations in one response, labeled separately."
         changes.append("variations-combined")
 
@@ -100,9 +126,9 @@ def _optimize_text(text: str, *, structured_output: bool) -> tuple[str, list[str
         optimized = f"Act as a precise domain expert. {optimized}"
         changes.append("role-added")
 
-    if not _LENGTH_PATTERN.search(optimized):
-        optimized = f"{optimized.rstrip()} Keep the response concise and organized into no more than 5 bullets."
-        changes.append("length-constrained")
+    if not _WORD_CAP_PATTERN.search(optimized):
+        optimized = f"{optimized.rstrip()} Answer in under {_configured_word_cap()} words."
+        changes.append("word-cap-added")
 
     if structured_output and not re.search(r"\b(?:JSON|schema|structured|field(?:s)?|format)\b", optimized, re.IGNORECASE):
         optimized = f'{optimized.rstrip()} Return only valid JSON with the fields required by the response schema.'

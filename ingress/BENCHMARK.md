@@ -245,17 +245,20 @@ pending a real model.
 
 ## Real-model evidence: Gemini 2.5 Flash
 
-**Status: round 1 analyzed; round 2 completed, no larger run triggered.**
-Round-1 evidence, round-2 protocol, and all six round-2 responses are recorded
-below.
+**Status: round 1 analyzed; round 2 completed; a replicated round 3 is
+prepared but has not been run.** Round-1 evidence, round-2 protocol, corrected
+interpretation, and all six round-2 responses are recorded below.
 
-#### Round-2 pre-registered protocol
+#### Round-2 protocol and quota record
 
-Before sending round-2 requests, the decision rule was fixed as follows: if
-optimized outputs are both shorter and complete (`finish_reason=stop`) on at
-least two of the three shapes, plan a larger run on the next quota day. If not,
-record this round and propose optimizer v2 as a separately labeled iteration
-with quantified limits (for example, "under N words"); preserve v1 results.
+The initial round-2 rule text required a shorter, complete optimized output on
+at least two of three shapes. The retrospective correction treats a complete
+optimized output as qualifying against a truncated baseline only when the
+baseline's lower bound still establishes at least a 25% reduction. An
+unchanged-prompt pair is A/A noise and is excluded. This yields one qualifying
+shape, one A/A comparison, and one shape truncated in both arms; the
+two-shape threshold is not met. Round 3 uses the stricter pre-registered rule
+that both arms in both replicate pairs must finish with `stop`.
 Round 2 uses `reasoning_effort=none`, `max_tokens=1024`, one baseline and one
 optimized call per shape, counterbalanced order, and at least 16 seconds
 between request starts. HTTP 429/500/503 responses are retried at the same
@@ -287,6 +290,13 @@ successful calls. Full response bodies and provider usage are saved in
 [`verify/gemini_probe_round2_results.json`](../verify/gemini_probe_round2_results.json);
 per-attempt status/body records are in
 [`verify/gemini_probe_round2_retry_attempts.json`](../verify/gemini_probe_round2_retry_attempts.json).
+The round-2 runner saved its scheduled arm and locally derived effective
+prompt, but did not save the gateway's `prompt_optimization_arm` response
+header or structured change list. The historical change lists are therefore
+reconstructed from those saved prompts and the optimizer implementation at
+commit `e2ef232`, not copied from raw gateway log records. The round-3 runner now persists the response arm and optimizer-change headers,
+and compares the gateway's effective-prompt content hash with its local
+preview before sending the next request.
 
 All six samples report `reasoning_effort=none`, `max_tokens=1024`,
 `token_count_source=provider`, `telemetry_source=parametric_estimated`,
@@ -305,49 +315,90 @@ Across the three samples per arm, mean provider completion tokens were 756
 (baseline) and 667 (optimized); mean words were 465.3 and 422.0. Mean proxy
 energy was `0.0005565` vs. `0.0004981 kWh` (optimized minus baseline:
 `-0.0000584 kWh`), and mean proxy carbon was `0.211208044320` vs.
-`0.189043534368 gCO2e` (delta `-0.022164509952 gCO2e`). These aggregate
-figures include truncated responses and are not a valid causal savings
-estimate.
+`0.189043534368 gCO2e`. These aggregate figures include truncated responses
+and are not a valid causal savings estimate.
 
-For samples 1, 2, and 4, all content counts are lower bounds because the
-responses reached the token cap. Per the preregistered rule, a comparison
-counts as shorter only when both arms have `finish_reason=stop`. Thus:
+The corrected tally is **one qualifying shape, one A/A comparison, and one
+shape truncated in both arms**:
 
-- Focused explanation: neither response is complete; the optimized answer is
-  longer by 26 words, and neither is a valid shorter-output comparison.
-- Short how-to: optimized is complete at 429 words, but baseline is truncated;
-  it is not counted as a shorter-output comparison.
-- One-paragraph analysis: both are complete and optimized is 10 words shorter
-  (172 vs. 182), so this is the only shape satisfying the text-completeness
-  and shorter-output portion of the rule. However, the effective prompt did
-  not change in the optimized arm (`effective_prompt` equaled `prompt`), so
-  the difference is not attributable to a v1 instruction change.
+- **Focused explanation:** both responses hit the 1024-token cap, so this
+  shape is inconclusive.
+- **Short how-to:** optimized completed at 768 tokens and 429 words;
+  baseline was truncated at at least 1024 tokens and at least 575 words.
+  Optimized therefore used at least 25% fewer completion tokens and at least
+  25% fewer words. It qualifies as the one shorter-output result under the
+  corrected comparison rule. The optimized answer had 5 top-level bullets
+  and 18 total bullet lines: it met the literal five-top-level-bullet
+  instruction, but not its intent of a concise checklist.
+- **One-paragraph analysis:** both effective prompts were unchanged and both
+  responses completed (182 vs. 172 words). This is A/A noise, about 5.5%
+  relative to the baseline, and is excluded from the optimizer-effect tally.
+
+The variations rule increased output in the focused-explanation single-shot
+response. Its intended benefit—avoiding follow-up prompts for separately
+requested variants—was not tested here.
 
 The effective focused-explanation prompt gained a persona instruction and an
 unintended "provide all requested variations" instruction; the latter was
 triggered by "one brief example." The optimized how-to prompt gained persona
-and length-constrained instructions. The optimized one-paragraph prompt had
-no changes, which is why its ten-word difference cannot be attributed to the
-optimizer.
+and five-bullet instructions. The optimized one-paragraph prompt had no
+changes because "as a short one-paragraph assessment" matched the optimizer's
+existing role/length heuristics; it was not an optimizer treatment.
 
-The decision threshold was at least two of three shapes; it was met by only
-one, and that shape had no optimizer prompt transformation. **No larger run is
-planned from this result.** The outputs are also not especially concise against
-the reviewed expectations (roughly 70-110 words for shapes 1 and 3, and under
-140 words for shape 2): the only complete optimized how-to was 429 words.
+The decision threshold was at least two qualifying shapes; only one qualifies,
+so the threshold was not met. Round 3 is prepared as a separate, quota-gated
+experiment below.
 
 All energy/carbon numbers above are proxy-coefficient estimates, not
 Google-published measurements. The Gemini row is a placeholder shared with
 `lca-demo`; observed energy deltas are not evidence of a causal energy saving.
 
-#### Proposed optimizer v2 (not implemented)
+#### Round-3 pre-registration (implemented offline; no requests sent)
 
-Preserve v1. As a separately labeled experiment, v2 could add a task-scoped,
-quantified instruction such as "under 120 words" for short explanations and
-how-tos, while leaving broad analyses uncapped or caller-configurable. This is
-an instruction in the prompt, not a `max_tokens` setting. Make no savings
-claim unless both arms end with `finish_reason=stop`; a max-token-truncated
-response does not count as shorter.
+Optimizer v2 replaces the default five-bullet instruction with a configurable
+word cap (`PROMPT_OPT_WORD_CAP`, default `150`; the optimized instance will use
+150). It adds `Answer in under N words.` when a numeric word cap is not already
+present, even if the input only says "brief" or "short". Combining variations
+is now opt-in through `PROMPT_OPT_COMBINE_VARIATIONS`; the default is off.
+Compose pins `PROMPT_OPT_AB_PERCENT=100` on both gateway services, with prompt
+optimization disabled on baseline and enabled on the optimized instance.
+
+The coverage rubric is frozen in
+[`verify/gemini_probe_round3_rubric.json`](../verify/gemini_probe_round3_rubric.json)
+before any round-3 requests. The focused explanation has five binary items:
+define the idempotency key; state what key/outcome data the server stores;
+state the limited retention period; distinguish safe retry from duplicate
+side effect; and give an example containing the failure mode and fix. The
+how-to has seven binary items directly stated in its prompt: connect and read
+timeouts; transient-failure-only retries; exponential backoff with jitter;
+honor `Retry-After`; bound attempts; protect non-idempotent retries with an
+idempotency key; and name a monitoring signal. Each response is scored 0/1
+for each item.
+
+The quota-gated run has **eight** requests, all with
+`reasoning_effort=none` and `max_tokens=2048`: two counterbalanced
+baseline/optimized pairs for focused explanation and two for short how-to.
+The paragraph A/A request has been dropped. For each shape, the baseline
+noise is the absolute word-count spread between its two baseline responses.
+At least **10 RPD requests** must remain on the dashboard immediately before
+launch: eight planned requests plus two reserved.
+
+Pre-registered decision rule: a shape counts only if all four responses finish
+with `finish_reason=stop`, both optimized prompts have non-empty change
+records, mean optimized word count is below the mean baseline count by more
+than that shape's baseline spread, and mean optimized coverage score is not
+below mean baseline coverage. If the first three conditions hold but coverage
+is lower, report **"shorter but less complete"**; that is a task-scaled-cap
+finding, not a success. Plan a larger run only if both shapes count.
+
+To reduce scoring bias, `verify/gemini_probe_round3.py` emits randomly labeled
+and shuffled cases with the prompt rubric and response text but no arm or
+sample number. The scorer enters 0/1 values in that blinded sheet; run
+`uv run python verify/gemini_probe_round3_scoring.py apply --results verify/gemini_probe_round3_results.json --sheet verify/gemini_probe_round3_blinded_scores.json`
+to attach scores and calculate the preregistered evaluation. The result file
+records `git rev-parse HEAD` and whether the worktree was dirty at run start.
+The runner's `--dry-run` prints all eight assignments, settings, expected
+prompt changes, and effective prompts without contacting Gemini.
 
 #### Superseded September telemetry
 
