@@ -421,16 +421,21 @@ finding and revise the experiment only as a separately preregistered version.
 
 `verify/gemini_probe_round3.py` saves the full responses, response headers,
 results file, and a sample-number-only response export; it does not score the
-responses or generate scoring sheets during collection. Afterward, create the
-two scoring sheets from the saved results, score pass 1, and have the
-independent scorer use the sample-number-only export. Run
+responses during collection. The export has one record per response with only
+`sample_number`, `prompt`, and `response_text`; it has no arm field. Afterward,
+score pass 1 from the saved responses and have the independent scorer use that
+export. Apply both saved score sets only after collection and independent
+scoring are complete. Run
 `uv run python verify/gemini_probe_round3_scoring.py apply --results verify/gemini_probe_round3_results.json --pass1 verify/gemini_probe_round3_pass1.json --pass2 verify/gemini_probe_round3_pass2.json`
 to attach both score sets, require quoted resolutions for disagreements, and
 calculate raw per-item agreement and the preregistered evaluation. The result
-file records the rubric preregistration commit, `git rev-parse HEAD`, and
-whether the worktree was dirty at run start. The runner's `--dry-run` prints
-all eight assignments, settings, expected prompt changes, and effective
-prompts without contacting Gemini.
+file records the rubric preregistration commit and `git rev-parse HEAD`; the
+runner refuses to start unless the worktree is clean. Before either dry-run or
+requests, it checks that the rubric, prompts, and optimizer are byte-identical
+to the pinned commit using `git diff --quiet <pin> -- <paths>` plus direct
+byte comparison. The runner's `--dry-run` prints all eight assignments,
+settings, expected prompt changes, and effective prompts without contacting
+Gemini.
 
 #### Superseded September telemetry
 

@@ -1,6 +1,15 @@
 import copy
+import json
 
-from verify.gemini_probe_round3 import build_schedule, evaluate_results
+import pytest
+
+from verify.gemini_probe_round3 import (
+    DEFAULT_RUBRIC_FILE,
+    build_response_export,
+    build_schedule,
+    evaluate_results,
+    verify_integrity,
+)
 from verify.gemini_probe_round3_scoring import (
     apply_blinded_scores,
     create_blinded_sheet,
@@ -34,6 +43,54 @@ def test_round_three_schedule_has_eight_counterbalanced_requests():
                 if task["pair_number"] == pair_number
             ]
             assert pair_arms in (["baseline", "optimized"], ["optimized", "baseline"])
+
+
+def test_response_export_uses_sample_numbers_without_arm_labels():
+    exported = build_response_export(
+        [
+            {
+                "sample_number": 1,
+                "arm": "optimized",
+                "prompt": "A test prompt",
+                "raw_response": {
+                    "choices": [{"message": {"content": "A test response"}}]
+                },
+            }
+        ]
+    )
+
+    assert exported == {
+        "responses": [
+            {
+                "sample_number": 1,
+                "prompt": "A test prompt",
+                "response_text": "A test response",
+            }
+        ]
+    }
+    assert "arm" not in json.dumps(exported)
+
+
+def test_example_criterion_does_not_require_a_lost_response():
+    rubric = json.loads(DEFAULT_RUBRIC_FILE.read_text(encoding="utf-8"))
+    criterion = next(
+        item["criterion"]
+        for item in rubric["focused_explanation"]
+        if item["id"] == "example"
+    )
+
+    assert "operation would execute twice without an idempotency key" in criterion
+    assert "reusing the same key prevents the second effect" in criterion
+    assert "lost response" not in criterion
+
+
+def test_integrity_gate_rejects_a_modified_temporary_rubric(tmp_path):
+    altered_rubric = tmp_path / "rubric.json"
+    rubric_bytes = DEFAULT_RUBRIC_FILE.read_bytes()
+    altered_rubric.write_bytes(rubric_bytes.replace(b"unique", b"altered"))
+
+    with pytest.raises(RuntimeError, match="supplied rubric file is not byte-identical"):
+        verify_integrity(altered_rubric)
 
 
 def make_samples(

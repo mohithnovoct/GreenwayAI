@@ -2,7 +2,6 @@
 
 import argparse
 import asyncio
-import copy
 import json
 import os
 from pathlib import Path
@@ -20,20 +19,23 @@ from verify.gemini_probe_round2 import (
     request_with_retries,
     response_metrics,
 )
-from verify.gemini_probe_round3_scoring import (
-    DEFAULT_RUBRIC_FILE,
-    create_blinded_sheet,
-)
+from verify.gemini_probe_round3_scoring import DEFAULT_RUBRIC_FILE
 
-PREREGISTRATION_COMMIT = "f2a0db38a03ce0799c9f0cb85d7e46743197bfe4"
+PREREGISTRATION_COMMIT = "8e1e125d33f2303e64e41a49f9344977693aa236"
+PINNED_INPUTS = (
+    "verify/gemini_probe_round3_rubric.json",
+    "verify/gemini_probe_round2_prompts.json",
+    "optimizers/prompt_optimizer.py",
+)
 MAX_TOKENS = 2048
 PAIRS_PER_SHAPE = 2
 PLANNED_REQUESTS = 8
 MIN_REMAINING_REQUESTS = 10
 DEFAULT_RESULTS_FILE = Path(__file__).with_name("gemini_probe_round3_results.json")
 DEFAULT_ATTEMPTS_FILE = Path(__file__).with_name("gemini_probe_round3_attempts.json")
-DEFAULT_PASS1_FILE = Path(__file__).with_name("gemini_probe_round3_pass1.json")
-DEFAULT_PASS2_FILE = Path(__file__).with_name("gemini_probe_round3_pass2.json")
+DEFAULT_RESPONSE_EXPORT_FILE = Path(__file__).with_name(
+    "gemini_probe_round3_responses.json"
+)
 
 
 def build_schedule(prompts: list[dict[str, str]]) -> list[dict[str, Any]]:
@@ -66,7 +68,7 @@ def build_schedule(prompts: list[dict[str, str]]) -> list[dict[str, Any]]:
     return schedule
 
 
-def git_snapshot() -> dict[str, Any]:
+def verify_integrity(rubric_file: Path) -> dict[str, Any]:
     repository = Path(__file__).resolve().parents[1]
     commit = subprocess.run(
         ["git", "rev-parse", "HEAD"],
@@ -82,6 +84,8 @@ def git_snapshot() -> dict[str, Any]:
         capture_output=True,
         text=True,
     ).stdout
+    if status.strip():
+        raise RuntimeError("Refusing to run: git working tree is dirty")
     subprocess.run(
         ["git", "merge-base", "--is-ancestor", PREREGISTRATION_COMMIT, "HEAD"],
         cwd=repository,
@@ -89,10 +93,58 @@ def git_snapshot() -> dict[str, Any]:
         capture_output=True,
         text=True,
     )
+    committed_rubric = b""
+    for relative_path in PINNED_INPUTS:
+        diff = subprocess.run(
+            ["git", "diff", "--quiet", PREREGISTRATION_COMMIT, "--", relative_path],
+            cwd=repository,
+            check=False,
+        )
+        if diff.returncode == 1:
+            raise RuntimeError(
+                f"Refusing to run: {relative_path} differs from "
+                f"pinned commit {PREREGISTRATION_COMMIT}"
+            )
+        if diff.returncode != 0:
+            raise subprocess.CalledProcessError(diff.returncode, diff.args)
+
+        pinned_bytes = subprocess.run(
+            ["git", "show", f"{PREREGISTRATION_COMMIT}:{relative_path}"],
+            cwd=repository,
+            check=True,
+            capture_output=True,
+        ).stdout
+        working_bytes = (repository / Path(relative_path)).read_bytes()
+        if working_bytes != pinned_bytes:
+            raise RuntimeError(
+                f"Refusing to run: {relative_path} is not byte-identical to "
+                f"pinned commit {PREREGISTRATION_COMMIT}"
+            )
+        if relative_path == "verify/gemini_probe_round3_rubric.json":
+            committed_rubric = pinned_bytes
+
+    if rubric_file.read_bytes() != committed_rubric:
+        raise RuntimeError(
+            "Refusing to run: supplied rubric file is not byte-identical to "
+            f"pinned commit {PREREGISTRATION_COMMIT}"
+        )
     return {
         "git_rev_parse_head": commit,
-        "git_dirty_tree": bool(status.strip()),
+        "git_dirty_tree": False,
         "rubric_preregistration_commit": PREREGISTRATION_COMMIT,
+    }
+
+
+def build_response_export(samples: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "responses": [
+            {
+                "sample_number": sample["sample_number"],
+                "prompt": sample["prompt"],
+                "response_text": sample["raw_response"]["choices"][0]["message"]["content"],
+            }
+            for sample in samples
+        ]
     }
 
 
@@ -200,14 +252,13 @@ def evaluate_results(samples: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 async def main(args: argparse.Namespace) -> None:
+    execution = verify_integrity(args.rubric_file)
     if args.word_cap <= 0:
         raise ValueError("--word-cap must be a positive integer")
     os.environ["PROMPT_OPT_WORD_CAP"] = str(args.word_cap)
     os.environ["PROMPT_OPT_COMBINE_VARIATIONS"] = "false"
-
     prompts = json.loads(PROMPT_FILE.read_text(encoding="utf-8"))
     schedule = build_schedule(prompts)
-    execution = git_snapshot()
     protocol = {
         "max_tokens": MAX_TOKENS,
         "word_cap": args.word_cap,
@@ -216,7 +267,7 @@ async def main(args: argparse.Namespace) -> None:
         "quota_reserved": 2,
         "minimum_quota_remaining": MIN_REMAINING_REQUESTS,
         "baseline_noise_measure": "word-count range between the two baseline responses for each shape",
-        "coverage_rubric": DEFAULT_RUBRIC_FILE.name,
+        "coverage_rubric": args.rubric_file.name,
         "coverage_scoring_passes": ["agent_pass1", "independent_pass2"],
         "agreement_measure": "raw percent agreement per rubric item across four responses per shape",
         "decision_rule": (
@@ -388,6 +439,10 @@ async def main(args: argparse.Namespace) -> None:
                     "attempts": attempts,
                 },
             )
+            persist_json(
+                args.response_export_output,
+                build_response_export(results),
+            )
             print(json.dumps(record, ensure_ascii=False), flush=True)
             if actual_arm != task["arm"]:
                 raise RuntimeError(
@@ -405,12 +460,6 @@ async def main(args: argparse.Namespace) -> None:
                     "stopping before the next request"
                 )
 
-    rubric = json.loads(DEFAULT_RUBRIC_FILE.read_text(encoding="utf-8"))
-    score_sheet, assignments = create_blinded_sheet({"samples": results}, rubric)
-    for sample in results:
-        sample["coverage_blind_id"] = assignments[str(sample["sample_number"])]
-    persist_json(args.pass1_output, copy.deepcopy(score_sheet))
-    persist_json(args.pass2_output, copy.deepcopy(score_sheet))
     persist_json(
         args.output,
         {
@@ -418,10 +467,6 @@ async def main(args: argparse.Namespace) -> None:
             "protocol": protocol,
             "samples": results,
             "attempts": attempts,
-            "scoring_sheets": {
-                "agent_pass1": args.pass1_output.name,
-                "independent_pass2": args.pass2_output.name,
-            },
             "evaluation": None,
         },
     )
@@ -429,12 +474,10 @@ async def main(args: argparse.Namespace) -> None:
         json.dumps(
             {
                 "results": str(args.output),
-                "agent_pass1_sheet": str(args.pass1_output),
-                "independent_pass2_sheet": str(args.pass2_output),
-                "next_step": (
-                    "Score both shuffled sheets independently, record any "
-                    "disagreement quote in pass 1, then apply both score sets."
+                "sample_number_only_response_export": str(
+                    args.response_export_output
                 ),
+                "next_step": "Score only after collection has stopped.",
             },
             ensure_ascii=False,
         ),
@@ -448,8 +491,12 @@ if __name__ == "__main__":
     parser.add_argument("--optimized-gateway", default="http://127.0.0.1:8002/v1/chat/completions")
     parser.add_argument("--output", type=Path, default=DEFAULT_RESULTS_FILE)
     parser.add_argument("--attempts-output", type=Path, default=DEFAULT_ATTEMPTS_FILE)
-    parser.add_argument("--pass1-output", type=Path, default=DEFAULT_PASS1_FILE)
-    parser.add_argument("--pass2-output", type=Path, default=DEFAULT_PASS2_FILE)
+    parser.add_argument(
+        "--response-export-output",
+        type=Path,
+        default=DEFAULT_RESPONSE_EXPORT_FILE,
+    )
+    parser.add_argument("--rubric-file", type=Path, default=DEFAULT_RUBRIC_FILE)
     parser.add_argument("--quota-remaining", type=int)
     parser.add_argument("--word-cap", type=int, default=150)
     parser.add_argument("--dry-run", action="store_true")
