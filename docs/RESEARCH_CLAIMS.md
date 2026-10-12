@@ -39,8 +39,16 @@ baseline mean by more than baseline spread, and mean optimized coverage is
 not lower. A shorter result that loses coverage is reported as "shorter but
 less complete." A larger run is planned only if both shapes count. Run only
 after a fresh quota check confirms at least 10 RPD remaining. The committed
-rubric uses blind randomized response labels and per-element 0/1 scoring.
-No requests were sent while preparing this plan.
+rubric contains objective yes/no checks (5 focused-explanation elements and
+7 how-to elements). Each response is scored twice (agent pass 1 and
+independent pass 2); random labels omit arm/sample identifiers, but length can
+reveal the arm, so scoring is rubric-bound, not blind. Report raw per-item
+agreement; disagreements are resolved by quoting response text without
+consulting the arm. Predictions: focused explanation passes coverage at 150
+words; how-to is shorter but fails coverage at 150 words. If the latter is
+shorter but less complete, design v3 with a cap scaled to required elements;
+if both shapes pass, plan a larger run. No requests were sent while preparing
+this plan.
 
 The local vLLM service is disabled because the container has no GPU. Phase 3
 should not close on mock-backend evidence alone. Gemini connectivity and

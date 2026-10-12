@@ -2,53 +2,53 @@
   "focused_explanation": [
     {
       "id": "definition",
-      "criterion": "Defines an idempotency key as a request identifier used to recognize the same logical operation across retries."
+      "criterion": "YES only if the response explicitly calls an idempotency key a unique identifier, token, or key sent with a request to identify the same logical operation across retries; otherwise NO."
     },
     {
       "id": "stored_data",
-      "criterion": "Identifies what the server stores for the key, such as the request outcome or original response."
+      "criterion": "YES only if the response explicitly says the server stores the key associated with the original result or response (for example, status and response body); otherwise NO."
     },
     {
       "id": "retention",
-      "criterion": "Explains that the stored key/result is retained for a limited period or until expiration."
+      "criterion": "YES only if the response explicitly says the key/result is retained for a limited time, gives a duration, or says it expires/is purged; otherwise NO."
     },
     {
       "id": "retry_vs_duplicate",
-      "criterion": "Distinguishes a safe retry that avoids repeating the operation from a retry that causes a duplicate side effect."
+      "criterion": "YES only if the response explicitly says a retry with the same key returns/reuses the original result without executing the operation again AND contrasts that with an unprotected/new-key retry that repeats the operation or side effect; otherwise NO."
     },
     {
       "id": "example",
-      "criterion": "Gives an example showing the failure mode and how an idempotency key fixes it."
+      "criterion": "YES only if one concrete example states an initial operation succeeded but its response was lost/not received, a retry would duplicate the effect without a key, and reusing the same key prevents the second effect; otherwise NO."
     }
   ],
   "short_how_to": [
     {
       "id": "connect_and_read_timeouts",
-      "criterion": "Covers choosing both connect and read timeouts."
+      "criterion": "YES only if the response gives a selection rule or concrete value for BOTH the connect timeout and the read timeout; otherwise NO."
     },
     {
       "id": "transient_failures",
-      "criterion": "Limits retries to transient failures."
+      "criterion": "YES only if the response says to retry transient failures (such as 5xx/network errors) and exclude non-transient/client failures (such as ordinary 4xx); otherwise NO."
     },
     {
       "id": "backoff_jitter",
-      "criterion": "Covers exponential backoff with jitter."
+      "criterion": "YES only if the response names exponential backoff AND randomized jitter; otherwise NO."
     },
     {
       "id": "retry_after",
-      "criterion": "Covers honoring the Retry-After response header."
+      "criterion": "YES only if the response explicitly names the Retry-After header and says to honor/respect its value; otherwise NO."
     },
     {
       "id": "attempt_bound",
-      "criterion": "Covers bounding the total number of attempts."
+      "criterion": "YES only if the response specifies a finite maximum retry/attempt count or a finite overall time limit; otherwise NO."
     },
     {
       "id": "non_idempotent_safety",
-      "criterion": "Says non-idempotent operations must not be retried unless protected by an idempotency key."
+      "criterion": "YES only if the response says a non-idempotent operation such as POST must not be retried unless the same idempotency key is used/provided; otherwise NO."
     },
     {
       "id": "monitoring_signal",
-      "criterion": "Names a monitoring signal that could reveal retry misconfiguration."
+      "criterion": "YES only if the response names a measurable retry-related signal (for example, retry rate or retries per request) that can expose misconfiguration; otherwise NO."
     }
   ]
 }

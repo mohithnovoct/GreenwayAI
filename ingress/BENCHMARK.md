@@ -366,14 +366,20 @@ optimization disabled on baseline and enabled on the optimized instance.
 The coverage rubric is frozen in
 [`verify/gemini_probe_round3_rubric.json`](../verify/gemini_probe_round3_rubric.json)
 before any round-3 requests. The focused explanation has five binary items:
-define the idempotency key; state what key/outcome data the server stores;
-state the limited retention period; distinguish safe retry from duplicate
-side effect; and give an example containing the failure mode and fix. The
-how-to has seven binary items directly stated in its prompt: connect and read
-timeouts; transient-failure-only retries; exponential backoff with jitter;
-honor `Retry-After`; bound attempts; protect non-idempotent retries with an
-idempotency key; and name a monitoring signal. Each response is scored 0/1
-for each item.
+(1) explicitly defines the key as a unique request identifier for the same
+logical operation across retries; (2) says the server stores the key associated
+with the original result/response; (3) names limited retention, a duration, or
+expiry; (4) says the same key reuses the original result without re-execution
+and contrasts this with an unprotected duplicate side effect; and (5) gives a
+concrete lost-response example where reusing the key prevents the second
+effect. The how-to has seven binary items: (1) gives a selection rule/value for
+both connect and read timeouts; (2) retries transient failures and excludes
+ordinary client failures; (3) names exponential backoff and randomized jitter;
+(4) names `Retry-After` and says to honor its value; (5) gives a finite attempt
+count or overall time limit; (6) prohibits retrying a non-idempotent operation
+unless the same idempotency key is used; and (7) names a measurable retry
+signal. Each check is YES/NO (stored as 1/0); the exact criteria in the JSON
+are controlling.
 
 The quota-gated run has **eight** requests, all with
 `reasoning_effort=none` and `max_tokens=2048`: two counterbalanced
@@ -391,14 +397,32 @@ below mean baseline coverage. If the first three conditions hold but coverage
 is lower, report **"shorter but less complete"**; that is a task-scaled-cap
 finding, not a success. Plan a larger run only if both shapes count.
 
-To reduce scoring bias, `verify/gemini_probe_round3.py` emits randomly labeled
-and shuffled cases with the prompt rubric and response text but no arm or
-sample number. The scorer enters 0/1 values in that blinded sheet; run
-`uv run python verify/gemini_probe_round3_scoring.py apply --results verify/gemini_probe_round3_results.json --sheet verify/gemini_probe_round3_blinded_scores.json`
-to attach scores and calculate the preregistered evaluation. The result file
-records `git rev-parse HEAD` and whether the worktree was dirty at run start.
-The runner's `--dry-run` prints all eight assignments, settings, expected
-prompt changes, and effective prompts without contacting Gemini.
+Each response is scored twice against only the committed rubric: agent pass 1
+and an independent pass 2 (a separate session or human). The shuffled scoring
+sheet omits arm and sample identifiers, but response length and wording can
+reveal an arm; therefore scoring is **rubric-bound, not blind**. Both passes
+are saved per response in the results JSON. The scorer reports raw per-item
+percent agreement over the eight responses (4 per shape/item); Cohen's kappa
+is not used. Any pass disagreement is resolved by quoting the response text
+for that item, without consulting or re-reading the arm assignment. Record
+the quoted evidence and final 0/1 resolution with the results.
+
+Predictions, recorded before the run: (a) focused explanation will pass the
+coverage comparison at 150 words; (b) how-to will be shorter but fail coverage
+at 150 words because seven distinct required elements compete for the cap.
+If focused passes and how-to is shorter but less complete, design v3 with a
+word cap that scales with the number of required elements. If both shapes
+pass, plan a larger run with more pairs. If either shape is not complete,
+changed, or shorter beyond baseline spread, retain the null/inconclusive
+finding and revise the experiment only as a separately preregistered version.
+
+`verify/gemini_probe_round3.py` emits the shuffled cases after collecting all
+responses. Pass 1 scores are recorded in the results via the scoring script;
+pass 2 is separately supplied and both score sets plus item agreement are
+stored there. The result file records `git rev-parse HEAD` and whether the
+worktree was dirty at run start. The runner's `--dry-run` prints all eight
+assignments, settings, expected prompt changes, and effective prompts without
+contacting Gemini.
 
 #### Superseded September telemetry
 
