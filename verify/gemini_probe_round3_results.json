@@ -1,0 +1,957 @@
+{
+  "execution": {
+    "git_rev_parse_head": "b7d929b20d8b539a261f5ece40ccbc951a961237",
+    "git_dirty_tree": false,
+    "rubric_preregistration_commit": "8e1e125d33f2303e64e41a49f9344977693aa236"
+  },
+  "protocol": {
+    "max_tokens": 2048,
+    "word_cap": 150,
+    "variations_rule_enabled": false,
+    "planned_requests": 8,
+    "quota_reserved": 2,
+    "minimum_quota_remaining": 10,
+    "quota_gate": "Today's usage in the AI Studio 1-day view, cross-checked against saved attempt logs, must leave at least 10 requests (8 planned + 2 spare).",
+    "baseline_noise_measure": "word-count range between the two baseline responses for each shape",
+    "coverage_rubric": "gemini_probe_round3_rubric.json",
+    "coverage_scoring_passes": [
+      "agent_pass1",
+      "independent_pass2"
+    ],
+    "agreement_measure": "raw percent agreement per rubric item across four responses per shape",
+    "decision_rule": "A shape counts only if all four responses finish with stop, both optimized prompts have non-empty change records, mean optimized words are below mean baseline words by more than baseline spread, and optimized mean coverage is at least baseline mean coverage. Plan a larger run only if both shapes count."
+  },
+  "samples": [
+    {
+      "sample_number": 1,
+      "shape_number": 1,
+      "shape": "focused_explanation",
+      "pair_number": 1,
+      "pair_position": 1,
+      "measurement_type": "paired",
+      "arm": "baseline",
+      "prompt": "Explain why an API should use idempotency keys for requests that may be retried. Define an idempotency key, describe what the server stores and for how long at a high level, and distinguish a safe retry from a duplicated side effect. Assume the reader knows HTTP methods but has not designed a payment or job-submission endpoint. Use one brief example to illustrate the failure mode and the fix. Keep the explanation focused on request handling rather than implementation code.",
+      "url": "http://127.0.0.1:8000/v1/chat/completions",
+      "model": "gemini-2.5-flash",
+      "reasoning_effort": "none",
+      "max_tokens": 2048,
+      "prompt_optimization_arm": "baseline",
+      "prompt_optimization_changes": [],
+      "expected_prompt_optimization_changes": [],
+      "effective_prompt_content_hash": "8a538d8aefe59fe60c7323c7680e8c2e4f4ae39310b05282a5df169c617d5870",
+      "effective_prompt": "Explain why an API should use idempotency keys for requests that may be retried. Define an idempotency key, describe what the server stores and for how long at a high level, and distinguish a safe retry from a duplicated side effect. Assume the reader knows HTTP methods but has not designed a payment or job-submission endpoint. Use one brief example to illustrate the failure mode and the fix. Keep the explanation focused on request handling rather than implementation code.",
+      "prompt_tokens_tiktoken_estimate": 96,
+      "raw_response": {
+        "choices": [
+          {
+            "finish_reason": "stop",
+            "index": 0,
+            "message": {
+              "content": "An API should use idempotency keys for requests that may be retried to **prevent unintended duplicate side effects if a client resends the same logical request multiple times**. This is crucial for operations that alter state on the server, ensuring that a request is processed only once, even if it is received multiple times due to network issues, client retries, or server-side failures during the initial processing. Without idempotency, a simple retry could lead to significant problems like double-charging a customer or creating redundant job entries.\n\nAn **idempotency key** is a unique, client-generated string that is sent with a request to identify that specific operation. It's like a unique transaction ID that the client assigns to its *intent* to perform an action. Typically, it's a UUID (Universally Unique Identifier) or a similar strong random string.\n\nWhen a server receives a request with an idempotency key:\n1. It first checks if it has already processed a request with that same key.\n2. If it has, it will return the result of the *original, successful processing* without executing the operation again.\n3. If it hasn't, it will process the request, store the idempotency key along with the successful result, and then return that result to the client.\n\nThe server stores the idempotency key along with some metadata, primarily the **outcome of the original successful request (e.g., the HTTP status code and response body)**. This allows the server to return the correct response if the same key is received again. This information is typically stored in a fast, accessible data store (like a cache or a dedicated idempotency table in a database). The server stores this information for a **configurable period**, often ranging from a few hours to a few days, depending on the expected retry window and storage considerations. Once this period expires, the key and its associated result are usually purged.\n\nThis mechanism distinguishes a **safe retry** from a **duplicated side effect**:\n\n*   **Safe Retry:** With idempotency keys, a retry is \"safe\" because if the original request was successful but the client didn't receive the confirmation, resending the request with the same key will simply return the original success response. No new side effects are generated on the server. The server recognizes the key, sees it was already successfully processed, and just sends back the previous result.\n*   **Duplicated Side Effect:** Without idempotency keys, if a request that modifies state (like creating a payment) is retried, the server would treat it as a brand new request. This would lead to a \"duplicated side effect\" – for example, two payments being created instead of one, or two identical jobs being enqueued.\n\n---\n\n**Example:**\n\nImagine a client submits a request to charge a customer for an order.\n\n**Failure Mode (Without Idempotency Key):**\n\n1.  Client sends `POST /charges` with payment details.\n2.  Server successfully processes the payment and charges the customer's card.\n3.  **Network glitch occurs:** The server's success response (`HTTP 200 OK`) fails to reach the client.\n4.  Client, not knowing if the charge went through, assumes failure and **retries** the identical `POST /charges` request.\n5.  Server (without idempotency logic) receives this as a *new* request and processes it again.\n6.  **Result:** The customer is double-charged. This is a duplicated side effect.\n\n**Fix (With Idempotency Key):**\n\n1.  Client generates a unique `Idempotency-Key: abc-123` and sends `POST /charges` with this key and payment details.\n2.  Server receives the request. It checks its idempotency store, finds `abc-123` is *not* present.\n3.  Server successfully processes the payment, charges the customer's card, and stores `abc-123` along with the `HTTP 200 OK` response.\n4.  **Network glitch occurs:** The server's `HTTP 200 OK` response fails to reach the client.\n5.  Client, not knowing if the charge went through, assumes failure and **retries** the `POST /charges` request, crucially using the *same* `Idempotency-Key: abc-123`.\n6.  Server receives the request with `Idempotency-Key: abc-123`. It checks its idempotency store, finds `abc-123` *is* present and was associated with an `HTTP 200 OK` response.\n7.  Server does *not* process the payment again. Instead, it immediately returns the *original* `HTTP 200 OK` response (which it had stored) to the client.\n8.  **Result:** The customer is charged only once. The client receives confirmation of the original success, making it a safe retry.",
+              "role": "assistant"
+            }
+          }
+        ],
+        "created": 1791799560,
+        "id": "ArHMao24IueB2roPjLLbGQ",
+        "model": "gemini-2.5-flash",
+        "object": "chat.completion",
+        "usage": {
+          "completion_tokens": 1048,
+          "prompt_tokens": 92,
+          "total_tokens": 1140
+        }
+      },
+      "gateway_response_headers": {
+        "date": "Mon, 12 Oct 2026 10:05:53 GMT, Mon, 12 Oct 2026 10:06:00 GMT",
+        "server": "uvicorn, scaffolding on HTTPServer2",
+        "content-type": "application/json",
+        "p3p": "CP=\"This is not a P3P policy! See g.co/p3phelp for more info.\"",
+        "vary": "Origin, X-Origin, Referer",
+        "x-xss-protection": "0",
+        "x-frame-options": "SAMEORIGIN",
+        "x-content-type-options": "nosniff",
+        "server-timing": "gfet4t7; dur=6610",
+        "set-cookie": "NID=CtoBCAESjAEBOxGDSJgAPCXUhQ8_Lg47dbsXruEBYLWIb4L8uxhPvnl99nzZM8Q1_MG-7Qeg5tjyOnar7MPEKIvsNSUGOCbsB0WaeC49otkf22mtpqj8BaDJowp_zAWXu4aQOgoq8h8F9sr8lh_08VUdd17kgnMneKbH7ipYmhEsbrQpAGv8OWYCZfOSlpMPiQQcECgBMkUB0qwHz9EvUQEuii6b6hqwtXS11PQ9QMaXsnSmFp0A4mAVl7p3j_Of29x-Fi0H24-kBapnPj7aC7_50OVwwkUDLXEfDw4; expires=Tue, 13-Apr-2027 10:05:54 GMT; path=/; domain=.generativelanguage.googleapis.com; HttpOnly",
+        "alt-svc": "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000",
+        "expires": "Mon, 12 Oct 2026 10:06:00 GMT",
+        "cache-control": "private",
+        "x-greenway-request-id": "721d2b91-3ebb-4a4f-a7da-e1fb8f17d2a3",
+        "x-greenway-content-hash": "8a538d8aefe59fe60c7323c7680e8c2e4f4ae39310b05282a5df169c617d5870",
+        "x-greenway-input-tokens": "92",
+        "x-greenway-prompt-optimization": "baseline",
+        "x-greenway-prompt-optimization-changes": "",
+        "content-length": "4854",
+        "x-greenway-output-tokens": "1048",
+        "x-greenway-token-source": "provider",
+        "x-greenway-energy-kwh": "0.0007612",
+        "x-greenway-carbon-gco2e": "0.288897687936",
+        "x-greenway-moer-kgperkwh": "0.31",
+        "x-greenway-carbon-source": "static_fallback",
+        "x-greenway-telemetry-source": "parametric_estimated",
+        "x-greenway-energy-source": "lca",
+        "x-greenway-normalization-ms": "11.516",
+        "x-greenway-proxy-ms": "6719.334",
+        "x-greenway-pool-acquire-ms": "13.982",
+        "x-greenway-round-trip-ms": "6700.893",
+        "x-greenway-response-read-ms": "2.051",
+        "x-greenway-latency-ms": "6731.02"
+      },
+      "metrics": {
+        "finish_reason": "stop",
+        "completion_tokens": 1048,
+        "hidden_tokens": 0,
+        "word_count": 705,
+        "top_level_bullet_count": 19,
+        "total_bullet_lines": 19,
+        "heading_count": 0,
+        "counts_are_lower_bounds": false
+      },
+      "gateway": {
+        "token_count_source": "provider",
+        "telemetry_source": "parametric_estimated",
+        "energy_source_tier": "lca",
+        "energy_kwh": "0.0007612",
+        "carbon_source_tier": "static_fallback",
+        "carbon_gco2e": "0.288897687936"
+      },
+      "attempt_numbers": [
+        1
+      ]
+    },
+    {
+      "sample_number": 2,
+      "shape_number": 1,
+      "shape": "focused_explanation",
+      "pair_number": 1,
+      "pair_position": 2,
+      "measurement_type": "paired",
+      "arm": "optimized",
+      "prompt": "Explain why an API should use idempotency keys for requests that may be retried. Define an idempotency key, describe what the server stores and for how long at a high level, and distinguish a safe retry from a duplicated side effect. Assume the reader knows HTTP methods but has not designed a payment or job-submission endpoint. Use one brief example to illustrate the failure mode and the fix. Keep the explanation focused on request handling rather than implementation code.",
+      "url": "http://127.0.0.1:8002/v1/chat/completions",
+      "model": "gemini-2.5-flash",
+      "reasoning_effort": "none",
+      "max_tokens": 2048,
+      "prompt_optimization_arm": "optimized",
+      "prompt_optimization_changes": [
+        "role-added",
+        "word-cap-added"
+      ],
+      "expected_prompt_optimization_changes": [
+        "role-added",
+        "word-cap-added"
+      ],
+      "effective_prompt_content_hash": "cd5f055d78d0cbb2fc0f69401646c1377e890524fcde9cb1cbeca3069299985e",
+      "effective_prompt": "Act as a precise domain expert. Explain why an API should use idempotency keys for requests that may be retried. Define an idempotency key, describe what the server stores and for how long at a high level, and distinguish a safe retry from a duplicated side effect. Assume the reader knows HTTP methods but has not designed a payment or job-submission endpoint. Use one brief example to illustrate the failure mode and the fix. Keep the explanation focused on request handling rather than implementation code. Answer in under 150 words.",
+      "prompt_tokens_tiktoken_estimate": 96,
+      "raw_response": {
+        "choices": [
+          {
+            "finish_reason": "stop",
+            "index": 0,
+            "message": {
+              "content": "Idempotency keys prevent duplicate side effects from retried requests. An idempotency key is a unique token (e.g., UUID) sent by the client with the request. The server stores this key with the request's outcome (success/failure) for a limited time (e.g., 24 hours, or until the operation is considered \"finalized\").\n\nA safe retry re-executes a request without altering system state if the first attempt already succeeded. A duplicated side effect executes the operation again, causing unintended changes.\n\n**Example:** A `POST /payments` request to charge $100 fails due to network timeout *after* the payment processor confirms success. Without an idempotency key, retrying the `POST` would charge $100 *again*. With a key, the server sees the key, retrieves the previous successful outcome, and returns it, preventing a double charge.",
+              "role": "assistant"
+            }
+          }
+        ],
+        "created": 1791799579,
+        "id": "GbHMaovSEuyt0-kP7OXqGQ",
+        "model": "gemini-2.5-flash",
+        "object": "chat.completion",
+        "usage": {
+          "completion_tokens": 187,
+          "prompt_tokens": 108,
+          "total_tokens": 295
+        }
+      },
+      "gateway_response_headers": {
+        "date": "Mon, 12 Oct 2026 10:06:15 GMT, Mon, 12 Oct 2026 10:06:19 GMT",
+        "server": "uvicorn, scaffolding on HTTPServer2",
+        "content-type": "application/json",
+        "p3p": "CP=\"This is not a P3P policy! See g.co/p3phelp for more info.\"",
+        "vary": "Origin, X-Origin, Referer",
+        "x-xss-protection": "0",
+        "x-frame-options": "SAMEORIGIN",
+        "x-content-type-options": "nosniff",
+        "server-timing": "gfet4t7; dur=2137",
+        "set-cookie": "NID=CtsBCAESjQEBOxGDSPlwMxrwOpEABbiUFCoOY_xJncBr-bUIUDhslfnEjBQf_Z6whC20bPo0C_RREmCaxWZvfmt-WSppinvkL9yKdupGU0xDVMjlufDopDOnD3dbxizSa_C51QopQzPKi-EWaM7czujzFeR0f1qcRuqYTUCirkXbQ_57VobFYYM5Kly9rlEQ6-dSsTgoATJFAdKsB89JymJ5a5fnzRykKMqhYui78ryYq6pQK9QpflSgrA8dmTJJinNa8zGg1bJKKE7qel8gm1sPfpWc80Rfet1aJosL; expires=Tue, 13-Apr-2027 10:06:17 GMT; path=/; domain=.generativelanguage.googleapis.com; HttpOnly",
+        "alt-svc": "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000",
+        "expires": "Mon, 12 Oct 2026 10:06:19 GMT",
+        "cache-control": "private",
+        "x-greenway-request-id": "a9436811-8cc8-4039-b95f-10423c136a28",
+        "x-greenway-content-hash": "cd5f055d78d0cbb2fc0f69401646c1377e890524fcde9cb1cbeca3069299985e",
+        "x-greenway-input-tokens": "108",
+        "x-greenway-prompt-optimization": "optimized",
+        "x-greenway-prompt-optimization-changes": "role-added,word-cap-added",
+        "content-length": "1113",
+        "x-greenway-output-tokens": "187",
+        "x-greenway-token-source": "provider",
+        "x-greenway-energy-kwh": "0.0001633",
+        "x-greenway-carbon-gco2e": "0.061977131424",
+        "x-greenway-moer-kgperkwh": "0.31",
+        "x-greenway-carbon-source": "static_fallback",
+        "x-greenway-telemetry-source": "parametric_estimated",
+        "x-greenway-energy-source": "lca",
+        "x-greenway-normalization-ms": "12.184",
+        "x-greenway-proxy-ms": "2232.155",
+        "x-greenway-pool-acquire-ms": "14.093",
+        "x-greenway-round-trip-ms": "2216.468",
+        "x-greenway-response-read-ms": "0.933",
+        "x-greenway-latency-ms": "2245.41"
+      },
+      "metrics": {
+        "finish_reason": "stop",
+        "completion_tokens": 187,
+        "hidden_tokens": 0,
+        "word_count": 126,
+        "top_level_bullet_count": 0,
+        "total_bullet_lines": 0,
+        "heading_count": 0,
+        "counts_are_lower_bounds": false
+      },
+      "gateway": {
+        "token_count_source": "provider",
+        "telemetry_source": "parametric_estimated",
+        "energy_source_tier": "lca",
+        "energy_kwh": "0.0001633",
+        "carbon_source_tier": "static_fallback",
+        "carbon_gco2e": "0.061977131424"
+      },
+      "attempt_numbers": [
+        2
+      ]
+    },
+    {
+      "sample_number": 3,
+      "shape_number": 1,
+      "shape": "focused_explanation",
+      "pair_number": 2,
+      "pair_position": 1,
+      "measurement_type": "paired",
+      "arm": "optimized",
+      "prompt": "Explain why an API should use idempotency keys for requests that may be retried. Define an idempotency key, describe what the server stores and for how long at a high level, and distinguish a safe retry from a duplicated side effect. Assume the reader knows HTTP methods but has not designed a payment or job-submission endpoint. Use one brief example to illustrate the failure mode and the fix. Keep the explanation focused on request handling rather than implementation code.",
+      "url": "http://127.0.0.1:8002/v1/chat/completions",
+      "model": "gemini-2.5-flash",
+      "reasoning_effort": "none",
+      "max_tokens": 2048,
+      "prompt_optimization_arm": "optimized",
+      "prompt_optimization_changes": [
+        "role-added",
+        "word-cap-added"
+      ],
+      "expected_prompt_optimization_changes": [
+        "role-added",
+        "word-cap-added"
+      ],
+      "effective_prompt_content_hash": "cd5f055d78d0cbb2fc0f69401646c1377e890524fcde9cb1cbeca3069299985e",
+      "effective_prompt": "Act as a precise domain expert. Explain why an API should use idempotency keys for requests that may be retried. Define an idempotency key, describe what the server stores and for how long at a high level, and distinguish a safe retry from a duplicated side effect. Assume the reader knows HTTP methods but has not designed a payment or job-submission endpoint. Use one brief example to illustrate the failure mode and the fix. Keep the explanation focused on request handling rather than implementation code. Answer in under 150 words.",
+      "prompt_tokens_tiktoken_estimate": 96,
+      "raw_response": {
+        "choices": [
+          {
+            "finish_reason": "stop",
+            "index": 0,
+            "message": {
+              "content": "APIs use idempotency keys for retried requests to prevent unintended side effects. An idempotency key is a unique, client-generated token for each *logical* request. The server stores this key with the request's result (e.g., \"success\" or \"failed transaction ID\") for a limited time (e.g., 24 hours).\n\n**Safe Retry vs. Duplicated Side Effect:**\n*   A **safe retry** means re-sending the same request with the *same* idempotency key. The server detects the key, returns the original result, and avoids processing it again.\n*   A **duplicated side effect** occurs without an idempotency key. The server treats each retry as a *new* request, leading to multiple executions (e.g., charging a customer twice).\n\n**Example:**\n*   **Failure:** User submits \"Pay $100\" request, network times out. User retries. Without an idempotency key, the API charges $100 *twice*.\n*   **Fix:** User client generates `id-key-A1`. First request fails. User retries with *same* `id-key-A1`. Server sees `id-key-A1` already processed (or processing) and returns original success/failure status, preventing duplicate charges.",
+              "role": "assistant"
+            }
+          }
+        ],
+        "created": 1791799598,
+        "id": "LLHMasG0BIim2roP_t7X-AM",
+        "model": "gemini-2.5-flash",
+        "object": "chat.completion",
+        "usage": {
+          "completion_tokens": 277,
+          "prompt_tokens": 108,
+          "total_tokens": 385
+        }
+      },
+      "gateway_response_headers": {
+        "date": "Mon, 12 Oct 2026 10:06:34 GMT, Mon, 12 Oct 2026 10:06:38 GMT",
+        "server": "uvicorn, scaffolding on HTTPServer2",
+        "content-type": "application/json",
+        "p3p": "CP=\"This is not a P3P policy! See g.co/p3phelp for more info.\"",
+        "vary": "Origin, X-Origin, Referer",
+        "x-xss-protection": "0",
+        "x-frame-options": "SAMEORIGIN",
+        "x-content-type-options": "nosniff",
+        "server-timing": "gfet4t7; dur=2822",
+        "set-cookie": "NID=CtsBCAESjQEBOxGDSKfcE-8CuY3wmiQlWf92fU4ru1YExJh5Gx-1Ea2HYgav60TdI5OWdALzRevUWG61REcOjwSOIPhKAbBoEHvITRtAcEbnSs86nnAHBSvodcYG53eDQuupPshXz9_27y3RHB1DjpPji05Lk_iGSZREfm1IE6mkYJ-dzfUbCdSA0WcjXWJsu0EZGf4oATJFAdKsB890K8Y91r_zGHZwI1Lq1v9rm7m8CnShOiAaG4CX7xtsW5NMCpiovezgOth_F6mcyyq-SbUWst76cM0PMxTxl7AO; expires=Tue, 13-Apr-2027 10:06:17 GMT; path=/; domain=.generativelanguage.googleapis.com; HttpOnly",
+        "alt-svc": "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000",
+        "expires": "Mon, 12 Oct 2026 10:06:38 GMT",
+        "cache-control": "private",
+        "x-greenway-request-id": "b1106633-fb04-4de6-a17e-9f577317876d",
+        "x-greenway-content-hash": "cd5f055d78d0cbb2fc0f69401646c1377e890524fcde9cb1cbeca3069299985e",
+        "x-greenway-input-tokens": "108",
+        "x-greenway-prompt-optimization": "optimized",
+        "x-greenway-prompt-optimization-changes": "role-added,word-cap-added",
+        "content-length": "1384",
+        "x-greenway-output-tokens": "277",
+        "x-greenway-token-source": "provider",
+        "x-greenway-energy-kwh": "0.0002263",
+        "x-greenway-carbon-gco2e": "0.085887476064",
+        "x-greenway-moer-kgperkwh": "0.31",
+        "x-greenway-carbon-source": "static_fallback",
+        "x-greenway-telemetry-source": "parametric_estimated",
+        "x-greenway-energy-source": "lca",
+        "x-greenway-normalization-ms": "0.72",
+        "x-greenway-proxy-ms": "2942.241",
+        "x-greenway-pool-acquire-ms": "1.168",
+        "x-greenway-round-trip-ms": "2939.313",
+        "x-greenway-response-read-ms": "1.071",
+        "x-greenway-latency-ms": "2943.711"
+      },
+      "metrics": {
+        "finish_reason": "stop",
+        "completion_tokens": 277,
+        "hidden_tokens": 0,
+        "word_count": 159,
+        "top_level_bullet_count": 4,
+        "total_bullet_lines": 4,
+        "heading_count": 0,
+        "counts_are_lower_bounds": false
+      },
+      "gateway": {
+        "token_count_source": "provider",
+        "telemetry_source": "parametric_estimated",
+        "energy_source_tier": "lca",
+        "energy_kwh": "0.0002263",
+        "carbon_source_tier": "static_fallback",
+        "carbon_gco2e": "0.085887476064"
+      },
+      "attempt_numbers": [
+        3
+      ]
+    },
+    {
+      "sample_number": 4,
+      "shape_number": 1,
+      "shape": "focused_explanation",
+      "pair_number": 2,
+      "pair_position": 2,
+      "measurement_type": "paired",
+      "arm": "baseline",
+      "prompt": "Explain why an API should use idempotency keys for requests that may be retried. Define an idempotency key, describe what the server stores and for how long at a high level, and distinguish a safe retry from a duplicated side effect. Assume the reader knows HTTP methods but has not designed a payment or job-submission endpoint. Use one brief example to illustrate the failure mode and the fix. Keep the explanation focused on request handling rather than implementation code.",
+      "url": "http://127.0.0.1:8000/v1/chat/completions",
+      "model": "gemini-2.5-flash",
+      "reasoning_effort": "none",
+      "max_tokens": 2048,
+      "prompt_optimization_arm": "baseline",
+      "prompt_optimization_changes": [],
+      "expected_prompt_optimization_changes": [],
+      "effective_prompt_content_hash": "8a538d8aefe59fe60c7323c7680e8c2e4f4ae39310b05282a5df169c617d5870",
+      "effective_prompt": "Explain why an API should use idempotency keys for requests that may be retried. Define an idempotency key, describe what the server stores and for how long at a high level, and distinguish a safe retry from a duplicated side effect. Assume the reader knows HTTP methods but has not designed a payment or job-submission endpoint. Use one brief example to illustrate the failure mode and the fix. Keep the explanation focused on request handling rather than implementation code.",
+      "prompt_tokens_tiktoken_estimate": 96,
+      "raw_response": {
+        "choices": [
+          {
+            "finish_reason": "stop",
+            "index": 0,
+            "message": {
+              "content": "When an API request might be retried due to network issues, server timeouts, or client-side errors, it's crucial to ensure that processing the request multiple times doesn't lead to unintended duplicated side effects. This is where idempotency keys come in.\n\n### Why an API Should Use Idempotency Keys\n\nAn API should use idempotency keys for retriable requests to guarantee that the same logical operation is performed *at most once*, even if the request is submitted multiple times. Without an idempotency key, a retried request could be processed by the server as a new, distinct request, leading to erroneous duplicate actions.\n\n**Example Failure Mode:**\n\nImagine a client wants to transfer \\$100 from Account A to Account B.\n1. The client sends a `POST /transfers` request with the transfer details.\n2. The server successfully processes the transfer (debits A, credits B).\n3. The server attempts to send a success response back to the client.\n4. Due to a network glitch, the success response never reaches the client.\n5. The client, unaware of the success, retries the **exact same `POST /transfers` request**.\n6. Without idempotency, the server processes this as a *new* transfer, resulting in Account A being debited *another* \\$100 and Account B being credited *another* \\$100. This is a duplicated side effect.\n\n**The Fix with Idempotency Keys:**\n\nBy including an idempotency key with the original request and subsequent retries, the server can detect and prevent this duplication.\n\n### What is an Idempotency Key?\n\nAn **idempotency key** is a unique, client-generated identifier that accompanies a request. It signals to the server that all requests bearing the same key represent the *same logical operation*. Typically, it's a UUID (Universally Unique Identifier) or another sufficiently random and collision-resistant string generated by the client.\n\n### What the Server Stores and For How Long\n\nWhen the server receives a request with an idempotency key for the first time:\n\n1.  It processes the request (e.g., performs the transfer).\n2.  It stores a record associating the **idempotency key** with the **outcome of that request**. The outcome includes the status code, response headers, and response body that would be returned to the client. It might also store an internal status indicating whether the operation is `pending`, `completed`, or `failed`.\n3.  This stored state is generally kept for a limited duration, often 24 hours or longer, depending on the expected retry window and the server's storage capacity. The period should be long enough to cover typical retry scenarios but not indefinitely, as keys will eventually expire and can be safely re-used by the client for truly new *different* operations.\n\nIf the server later receives another request with the *same* idempotency key:\n\n*   It checks its stored records.\n*   If it finds a matching key and the original operation has already completed successfully, it **does not re-process the request**. Instead, it returns the *same response* that was generated during the initial successful processing.\n*   If the original operation is still `pending`, the server might return a \"conflict\" (e.g., 409 Conflict) or wait for the initial operation to complete before returning its result.\n\n### Distinguishing a Safe Retry from a Duplicated Side Effect\n\n*   **Duplicated Side Effect:** This occurs when a server processes the *same logical operation* multiple times, leading to multiple changes in the system's state or external interactions (like sending multiple emails, debiting an account multiple times, or submitting multiple identical jobs). This is what idempotency keys prevent.\n    *   **Example (without idempotency):** Client sends `POST /orders` for \"Product X\". Response lost. Client retries. Server creates a *second* order for \"Product X\".\n*   **Safe Retry:** This occurs when a server receives a retried request and, thanks to an idempotency key, recognizes it as a re-submission of an already performed or in-progress operation. Instead of re-executing the operation, it simply returns the cached result of the original operation or confirms its ongoing status. The system's state is not altered *again* by the retry.\n    *   **Example (with idempotency):** Client sends `POST /orders` with `Idempotency-Key: abc-123` for \"Product X\". Response lost. Client retries the same `POST /orders` with `Idempotency-Key: abc-123`. Server finds `abc-123` in its records, sees that the order for \"Product X\" was successfully created, and returns the *original success response* without creating a new order.\n\nIn essence, idempotency keys transform potentially harmful retries into safe queries for the status or outcome of a previously initiated operation, ensuring the system remains consistent even in the face of unreliable networks or client behavior.",
+              "role": "assistant"
+            }
+          }
+        ],
+        "created": 1791799622,
+        "id": "PrHMauqaMramg8UPwavG0QY",
+        "model": "gemini-2.5-flash",
+        "object": "chat.completion",
+        "usage": {
+          "completion_tokens": 1063,
+          "prompt_tokens": 92,
+          "total_tokens": 1155
+        }
+      },
+      "gateway_response_headers": {
+        "date": "Mon, 12 Oct 2026 10:06:53 GMT, Mon, 12 Oct 2026 10:07:02 GMT",
+        "server": "uvicorn, scaffolding on HTTPServer2",
+        "content-type": "application/json",
+        "p3p": "CP=\"This is not a P3P policy! See g.co/p3phelp for more info.\"",
+        "vary": "Origin, X-Origin, Referer",
+        "x-xss-protection": "0",
+        "x-frame-options": "SAMEORIGIN",
+        "x-content-type-options": "nosniff",
+        "server-timing": "gfet4t7; dur=8009",
+        "set-cookie": "NID=CtoBCAESjAEBOxGDSB9rseaX4vlDa_nOxS1P6NyiJlQQihetzmzLf-rHQ-C-awYbmW3VQMPK9TtBQ9V5ulK33LW73q-eDUlaJO0lyF0oK0-PjWsSNV6mkFcCmcJCIPcK0WiWgt2dkifNswWBWz_FySDxtq7wY_DTv_V3JbL7q2PmDoc1b75UIbx75Lv5hOAkln7KPSgBMkUB0qwHzxv8UPVaxGO2esdgSJ4Vd0PhodHP2JHAN7NR8l8pV_QxZqm_HIp-yN5Bqn-SwvGrw6Pas4ighBzhw46RymAlRg4; expires=Tue, 13-Apr-2027 10:05:54 GMT; path=/; domain=.generativelanguage.googleapis.com; HttpOnly",
+        "alt-svc": "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000",
+        "expires": "Mon, 12 Oct 2026 10:07:02 GMT",
+        "cache-control": "private",
+        "x-greenway-request-id": "89803e41-cae3-4394-b515-a3c0ab95b287",
+        "x-greenway-content-hash": "8a538d8aefe59fe60c7323c7680e8c2e4f4ae39310b05282a5df169c617d5870",
+        "x-greenway-input-tokens": "92",
+        "x-greenway-prompt-optimization": "baseline",
+        "x-greenway-prompt-optimization-changes": "",
+        "content-length": "5164",
+        "x-greenway-output-tokens": "1063",
+        "x-greenway-token-source": "provider",
+        "x-greenway-energy-kwh": "0.0007717",
+        "x-greenway-carbon-gco2e": "0.292882745376",
+        "x-greenway-moer-kgperkwh": "0.31",
+        "x-greenway-carbon-source": "static_fallback",
+        "x-greenway-telemetry-source": "parametric_estimated",
+        "x-greenway-energy-source": "lca",
+        "x-greenway-normalization-ms": "0.733",
+        "x-greenway-proxy-ms": "8096.445",
+        "x-greenway-pool-acquire-ms": "1.356",
+        "x-greenway-round-trip-ms": "8091.329",
+        "x-greenway-response-read-ms": "1.436",
+        "x-greenway-latency-ms": "8097.337"
+      },
+      "metrics": {
+        "finish_reason": "stop",
+        "completion_tokens": 1063,
+        "hidden_tokens": 0,
+        "word_count": 739,
+        "top_level_bullet_count": 14,
+        "total_bullet_lines": 16,
+        "heading_count": 4,
+        "counts_are_lower_bounds": false
+      },
+      "gateway": {
+        "token_count_source": "provider",
+        "telemetry_source": "parametric_estimated",
+        "energy_source_tier": "lca",
+        "energy_kwh": "0.0007717",
+        "carbon_source_tier": "static_fallback",
+        "carbon_gco2e": "0.292882745376"
+      },
+      "attempt_numbers": [
+        4
+      ]
+    },
+    {
+      "sample_number": 5,
+      "shape_number": 2,
+      "shape": "short_how_to",
+      "pair_number": 1,
+      "pair_position": 1,
+      "measurement_type": "paired",
+      "arm": "baseline",
+      "prompt": "Give a practical checklist for adding request timeouts and retries to a Python service that calls an external API. Cover choosing connect and read timeouts, retrying only transient failures, exponential backoff with jitter, honoring Retry-After, bounding total attempts, and avoiding retries for non-idempotent operations unless protected by an idempotency key. Include one monitoring signal that would reveal misconfiguration. Assume the service uses httpx and runs in production. Do not provide code.",
+      "url": "http://127.0.0.1:8000/v1/chat/completions",
+      "model": "gemini-2.5-flash",
+      "reasoning_effort": "none",
+      "max_tokens": 2048,
+      "prompt_optimization_arm": "baseline",
+      "prompt_optimization_changes": [],
+      "expected_prompt_optimization_changes": [],
+      "effective_prompt_content_hash": "0df61f337e74fbac24c153e329060057baf9b1cc6d12d45a8562195a9a173f86",
+      "effective_prompt": "Give a practical checklist for adding request timeouts and retries to a Python service that calls an external API. Cover choosing connect and read timeouts, retrying only transient failures, exponential backoff with jitter, honoring Retry-After, bounding total attempts, and avoiding retries for non-idempotent operations unless protected by an idempotency key. Include one monitoring signal that would reveal misconfiguration. Assume the service uses httpx and runs in production. Do not provide code.",
+      "prompt_tokens_tiktoken_estimate": 93,
+      "raw_response": {
+        "choices": [
+          {
+            "finish_reason": "stop",
+            "index": 0,
+            "message": {
+              "content": "## Practical Checklist for Adding Request Timeouts and Retries to a Python Service (httpx)\n\nThis checklist focuses on practical considerations for integrating robust timeout and retry logic when calling an external API from a production Python service using `httpx`.\n\n### 1. Initial Timeout Configuration (Connect & Read)\n\n*   **Choose `connect_timeout` (Connection Establishment):**\n    *   **Baseline:** Start with a value that is slightly more than the typical network round-trip time (RTT) to the external API endpoint.\n    *   **Considerations:** Account for potential DNS resolution delays, TLS handshake, and general network congestion.\n    *   **Goal:** Fail fast if you can't even establish a connection. A common starting point is between **2-5 seconds**.\n*   **Choose `read_timeout` (Response Body Reading):**\n    *   **Baseline:** Determine the maximum expected time for the external API to *process* the request and return the *entire* response body.\n    *   **Considerations:**\n        *   Ask the API provider for typical and maximum response times for the specific endpoints you're calling.\n        *   Factor in data transfer size – larger responses take longer to stream.\n        *   Avoid excessively long read timeouts if the API is typically fast; it ties up resources.\n    *   **Goal:** Release resources if the API is taking too long to send data. This is often the more significant timeout for application logic and can range from **10 seconds to several minutes** depending on the API's nature.\n*   **Total Timeout (Implicit):** Be aware that `connect_timeout` + `read_timeout` (plus any internal processing time before the read timeout starts) represents the maximum time *you're willing to wait* for a successful response *without* considering retries.\n\n### 2. Identifying Transient Failures for Retries\n\n*   **HTTP Status Codes:**\n    *   **Retry:** `500 Internal Server Error`, `502 Bad Gateway`, `503 Service Unavailable`, `504 Gateway Timeout`. These typically indicate server-side issues that *might* resolve themselves.\n    *   **Do NOT Retry:** `4xx` client errors (e.g., `400 Bad Request`, `401 Unauthorized`, `403 Forbidden`, `404 Not Found`, `429 Too Many Requests` - see `Retry-After` below). These indicate issues with *your* request or your client's state, and re-attempting won't change the outcome.\n*   **Network Errors (Exceptions):**\n    *   **Retry:** `httpx.ConnectError`, `httpx.NetworkError` (general network issues), `httpx.TimeoutException` (connect or read timeouts). These signify that the network or the API was unreachable/unresponsive, making a retry potentially fruitful.\n    *   **Do NOT Retry (on their own):** Specific exceptions that indicate a fundamental misconfiguration (e.g., `httpx.InvalidURL`).\n*   **Consider Partial Data:** If the API can return partial data with a success code, ensure your parsing logic handles this gracefully before deciding if a retry is warranted.\n\n### 3. Implementing Exponential Backoff with Jitter\n\n*   **Exponential Backoff Core:**\n    *   Initial delay: Choose a small base delay (e.g., 0.1s to 1s).\n    *   Subsequent delays: Multiply the previous delay by a factor (e.g., 2) for each retry.\n    *   Example: 0.5s, 1s, 2s, 4s, 8s...\n*   **Jitter (Crucial for Distributed Systems):**\n    *   **Purpose:** Prevent \"thundering herd\" issues where many clients retry simultaneously after an outage, overwhelming the recovering API.\n    *   **Implementation:** Add a random amount of time to the calculated backoff delay.\n    *   **Types:**\n        *   **Full Jitter:** Randomly choose a delay between 0 and `min(max_backoff, base * (2^attempt))`.\n        *   **Decorrelated Jitter:** `sleep = min(max_backoff, random(base, sleep * 3))`.\n    *   **Recommendation:** Use **full jitter** for simplicity and effectiveness.\n\n### 4. Honoring `Retry-After` Headers\n\n*   **Priority:** If an API responds with `429 Too Many Requests` or `503 Service Unavailable` and includes a `Retry-After` header, **always honor it immediately**.\n*   **Parse Value:**\n    *   **Seconds:** If `Retry-After` is an integer, wait for that many seconds.\n    *   **HTTP Date:** If `Retry-After` is an HTTP date, calculate the difference from the current time and wait that many seconds.\n*   **Override Backoff:** The `Retry-After` value should supersede any calculated exponential backoff for that specific retry attempt.\n\n### 5. Bounding Total Attempts and Total Time\n\n*   **Maximum Retries:**\n    *   **Reason:** Prevent infinite loops and ensure resource eventual release.\n    *   **Considerations:** How critical is the operation? How long are you willing to wait for eventual consistency? A common range is **3-5 attempts**.\n*   **Maximum Total Time:**\n    *   **Reason:** Even with limited retries, backoff can lead to very long overall wait times.\n    *   **Considerations:** What's the acceptable end-to-end latency for this specific operation in your service?\n    *   **Implementation:** Introduce an absolute maximum time duration for *all* attempts, including initial request and all retries/delays. If this duration is exceeded, give up.\n    *   **Example:** For a critical request that *must* happen, maybe 1 minute. For a background task, perhaps 5 minutes.\n\n### 6. Idempotency and Non-Idempotent Operations\n\n*   **Understand Idempotency:** An operation is *idempotent* if applying it multiple times has the same effect as applying it once (e.g., `GET`, `PUT` if it's an upsert, `DELETE`).\n*   **Avoid Retries for Non-Idempotent Operations (Unless Protected):**\n    *   **Non-Idempotent Example:** A `POST` request to create a new resource (e.g., `POST /orders`). Retrying this without protection could create duplicate orders.\n    *   **Protection (Idempotency Key):** If the external API supports it, include an **idempotency key** (a unique value generated by *your* service for each logical operation) in the request headers (e.g., `Idempotency-Key: <UUID>`). The API uses this key to detect and de-duplicate repeated requests.\n    *   **Rule:**\n        *   **Idempotent operations:** Safe to retry without extra protection.\n        *   **Non-idempotent operations:** **DO NOT RETRY** them unless you are *certain* the external API handles idempotency for them (e.g., via an idempotency key mechanism). If not, it's better to fail immediately and let a human or an asynchronous compensation mechanism handle potential missed operations.\n\n### 7. Monitoring Signal for Misconfiguration\n\n*   **Signal:** **`http_request_total_duration_buckets_seconds` (Histogram/Distribution)**, specifically focusing on the higher percentiles (p95, p99, max) and the total count of requests that reached these higher values. Also, track the count of successful vs. failed retries.\n\n*   **How it reveals misconfiguration:**\n    *   **Too Short `read_timeout` / Max Attempts:** You'll see an elevated number of `httpx.TimeoutException` errors (or an increase in 5xx errors if the API is *really* slow) without successful retries. The *duration* of these failed requests will be clustered around your `read_timeout` value, indicating you're cutting off too early.\n    *   **Too Long `read_timeout` / Max Attempts:** You'll observe very high p95/p99 latency for your external API calls, indicating your service is waiting unnecessarily long for slow API responses or retries are taking an excessive amount of wall-clock time before eventually failing or succeeding. Your service resource utilization (e.g., thread/connection pool exhaustion) might also increase.\n    *   **Ineffective Retries (e.g., retrying 4xx):** An increase in `4xx` responses being logged *after* retry attempts, indicating your retry logic is wasting time on non-transient failures.\n    *   **Thundering Herd (Lack of Jitter):** If the external API experiences a brief outage, you might see a sudden, sharp spike in successful requests *immediately after* the outage, which could indicate that many of your services are retrying at the same precise moment. This signals a need to review jitter implementation.\n\nBy carefully applying this checklist and monitoring the suggested metrics, you can build a more resilient and performant Python service that gracefully handles external API flakiness.",
+              "role": "assistant"
+            }
+          }
+        ],
+        "created": 1791799650,
+        "id": "VrHMavPHNdasg8UPsvqpqQI",
+        "model": "gemini-2.5-flash",
+        "object": "chat.completion",
+        "usage": {
+          "completion_tokens": 1993,
+          "prompt_tokens": 95,
+          "total_tokens": 2088
+        }
+      },
+      "gateway_response_headers": {
+        "date": "Mon, 12 Oct 2026 10:07:17 GMT, Mon, 12 Oct 2026 10:07:30 GMT",
+        "server": "uvicorn, scaffolding on HTTPServer2",
+        "content-type": "application/json",
+        "vary": "Origin, X-Origin, Referer",
+        "x-xss-protection": "0",
+        "x-frame-options": "SAMEORIGIN",
+        "x-content-type-options": "nosniff",
+        "server-timing": "gfet4t7; dur=11908",
+        "alt-svc": "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000",
+        "x-greenway-request-id": "6a7a65a4-2af2-4cee-be4c-03084a4935bc",
+        "x-greenway-content-hash": "0df61f337e74fbac24c153e329060057baf9b1cc6d12d45a8562195a9a173f86",
+        "x-greenway-input-tokens": "95",
+        "x-greenway-prompt-optimization": "baseline",
+        "x-greenway-prompt-optimization-changes": "",
+        "content-length": "8585",
+        "x-greenway-output-tokens": "1993",
+        "x-greenway-token-source": "provider",
+        "x-greenway-energy-kwh": "0.0014236",
+        "x-greenway-carbon-gco2e": "0.540297883008",
+        "x-greenway-moer-kgperkwh": "0.31",
+        "x-greenway-carbon-source": "static_fallback",
+        "x-greenway-telemetry-source": "parametric_estimated",
+        "x-greenway-energy-source": "lca",
+        "x-greenway-normalization-ms": "0.849",
+        "x-greenway-proxy-ms": "12006.328",
+        "x-greenway-pool-acquire-ms": "1.004",
+        "x-greenway-round-trip-ms": "12001.104",
+        "x-greenway-response-read-ms": "1.124",
+        "x-greenway-latency-ms": "12007.382"
+      },
+      "metrics": {
+        "finish_reason": "stop",
+        "completion_tokens": 1993,
+        "hidden_tokens": 0,
+        "word_count": 1140,
+        "top_level_bullet_count": 17,
+        "total_bullet_lines": 56,
+        "heading_count": 8,
+        "counts_are_lower_bounds": false
+      },
+      "gateway": {
+        "token_count_source": "provider",
+        "telemetry_source": "parametric_estimated",
+        "energy_source_tier": "lca",
+        "energy_kwh": "0.0014236",
+        "carbon_source_tier": "static_fallback",
+        "carbon_gco2e": "0.540297883008"
+      },
+      "attempt_numbers": [
+        5
+      ]
+    },
+    {
+      "sample_number": 6,
+      "shape_number": 2,
+      "shape": "short_how_to",
+      "pair_number": 1,
+      "pair_position": 2,
+      "measurement_type": "paired",
+      "arm": "optimized",
+      "prompt": "Give a practical checklist for adding request timeouts and retries to a Python service that calls an external API. Cover choosing connect and read timeouts, retrying only transient failures, exponential backoff with jitter, honoring Retry-After, bounding total attempts, and avoiding retries for non-idempotent operations unless protected by an idempotency key. Include one monitoring signal that would reveal misconfiguration. Assume the service uses httpx and runs in production. Do not provide code.",
+      "url": "http://127.0.0.1:8002/v1/chat/completions",
+      "model": "gemini-2.5-flash",
+      "reasoning_effort": "none",
+      "max_tokens": 2048,
+      "prompt_optimization_arm": "optimized",
+      "prompt_optimization_changes": [
+        "role-added",
+        "word-cap-added"
+      ],
+      "expected_prompt_optimization_changes": [
+        "role-added",
+        "word-cap-added"
+      ],
+      "effective_prompt_content_hash": "1d9133f6148d587145635f0abbecb16eba76572c87cd8f27fa27e40e283e353e",
+      "effective_prompt": "Act as a precise domain expert. Give a practical checklist for adding request timeouts and retries to a Python service that calls an external API. Cover choosing connect and read timeouts, retrying only transient failures, exponential backoff with jitter, honoring Retry-After, bounding total attempts, and avoiding retries for non-idempotent operations unless protected by an idempotency key. Include one monitoring signal that would reveal misconfiguration. Assume the service uses httpx and runs in production. Do not provide code. Answer in under 150 words.",
+      "prompt_tokens_tiktoken_estimate": 93,
+      "raw_response": {
+        "choices": [
+          {
+            "finish_reason": "stop",
+            "index": 0,
+            "message": {
+              "content": "**Request Timeouts & Retries Checklist (httpx, External API)**\n\n1.  **Timeouts:**\n    *   **`connect_timeout`:** Short (e.g., 2-5s). For TCP handshake.\n    *   **`read_timeout`:** Longer (e.g., 10-30s). For data transfer. Choose based on expected API response times.\n\n2.  **Retries:**\n    *   **Conditions:** Only retry `httpx.ConnectError`, `httpx.TimeoutException`, and HTTP 5xx *internal* server errors (excluding 501, 505, etc.).\n    *   **Backoff:** Implement exponential backoff (e.g., `min_delay * (factor ** attempt_num)`) plus jitter to prevent thundering herd.\n    *   **`Retry-After`:** Honor `Retry-After` header if present.\n    *   **Max Attempts:** Define a maximum number of retry attempts (e.g., 3-5).\n    *   **Idempotency:** *Crucial*. Do NOT retry non-idempotent operations (POST, PUT without full payload, PATCH, DELETE) unless protected by an idempotency key (e.g., a UUID in a custom header).\n\n**Monitoring Signal:**\nIncreased \"API call latency (p99)\" for the external API, combined with a steady or decreasing \"API call success rate,\" indicates potential misconfigured timeouts or retries causing slow successes or cascading failures.",
+              "role": "assistant"
+            }
+          }
+        ],
+        "created": 1791799669,
+        "id": "crHMaqOJNeaZjuMPpaTYiQI",
+        "model": "gemini-2.5-flash",
+        "object": "chat.completion",
+        "usage": {
+          "completion_tokens": 327,
+          "prompt_tokens": 111,
+          "total_tokens": 438
+        }
+      },
+      "gateway_response_headers": {
+        "date": "Mon, 12 Oct 2026 10:07:45 GMT, Mon, 12 Oct 2026 10:07:49 GMT",
+        "server": "uvicorn, scaffolding on HTTPServer2",
+        "content-type": "application/json",
+        "vary": "Origin, X-Origin, Referer",
+        "x-xss-protection": "0",
+        "x-frame-options": "SAMEORIGIN",
+        "x-content-type-options": "nosniff",
+        "server-timing": "gfet4t7; dur=2765",
+        "alt-svc": "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000",
+        "x-greenway-request-id": "a7d79668-285b-4f94-b1cc-9b03e5641b19",
+        "x-greenway-content-hash": "1d9133f6148d587145635f0abbecb16eba76572c87cd8f27fa27e40e283e353e",
+        "x-greenway-input-tokens": "111",
+        "x-greenway-prompt-optimization": "optimized",
+        "x-greenway-prompt-optimization-changes": "role-added,word-cap-added",
+        "content-length": "1446",
+        "x-greenway-output-tokens": "327",
+        "x-greenway-token-source": "provider",
+        "x-greenway-energy-kwh": "0.0002622",
+        "x-greenway-carbon-gco2e": "0.099512577216",
+        "x-greenway-moer-kgperkwh": "0.31",
+        "x-greenway-carbon-source": "static_fallback",
+        "x-greenway-telemetry-source": "parametric_estimated",
+        "x-greenway-energy-source": "lca",
+        "x-greenway-normalization-ms": "2.349",
+        "x-greenway-proxy-ms": "2853.611",
+        "x-greenway-pool-acquire-ms": "2.158",
+        "x-greenway-round-trip-ms": "2846.237",
+        "x-greenway-response-read-ms": "1.045",
+        "x-greenway-latency-ms": "2856.764"
+      },
+      "metrics": {
+        "finish_reason": "stop",
+        "completion_tokens": 327,
+        "hidden_tokens": 0,
+        "word_count": 148,
+        "top_level_bullet_count": 2,
+        "total_bullet_lines": 9,
+        "heading_count": 0,
+        "counts_are_lower_bounds": false
+      },
+      "gateway": {
+        "token_count_source": "provider",
+        "telemetry_source": "parametric_estimated",
+        "energy_source_tier": "lca",
+        "energy_kwh": "0.0002622",
+        "carbon_source_tier": "static_fallback",
+        "carbon_gco2e": "0.099512577216"
+      },
+      "attempt_numbers": [
+        6
+      ]
+    },
+    {
+      "sample_number": 7,
+      "shape_number": 2,
+      "shape": "short_how_to",
+      "pair_number": 2,
+      "pair_position": 1,
+      "measurement_type": "paired",
+      "arm": "optimized",
+      "prompt": "Give a practical checklist for adding request timeouts and retries to a Python service that calls an external API. Cover choosing connect and read timeouts, retrying only transient failures, exponential backoff with jitter, honoring Retry-After, bounding total attempts, and avoiding retries for non-idempotent operations unless protected by an idempotency key. Include one monitoring signal that would reveal misconfiguration. Assume the service uses httpx and runs in production. Do not provide code.",
+      "url": "http://127.0.0.1:8002/v1/chat/completions",
+      "model": "gemini-2.5-flash",
+      "reasoning_effort": "none",
+      "max_tokens": 2048,
+      "prompt_optimization_arm": "optimized",
+      "prompt_optimization_changes": [
+        "role-added",
+        "word-cap-added"
+      ],
+      "expected_prompt_optimization_changes": [
+        "role-added",
+        "word-cap-added"
+      ],
+      "effective_prompt_content_hash": "1d9133f6148d587145635f0abbecb16eba76572c87cd8f27fa27e40e283e353e",
+      "effective_prompt": "Act as a precise domain expert. Give a practical checklist for adding request timeouts and retries to a Python service that calls an external API. Cover choosing connect and read timeouts, retrying only transient failures, exponential backoff with jitter, honoring Retry-After, bounding total attempts, and avoiding retries for non-idempotent operations unless protected by an idempotency key. Include one monitoring signal that would reveal misconfiguration. Assume the service uses httpx and runs in production. Do not provide code. Answer in under 150 words.",
+      "prompt_tokens_tiktoken_estimate": 93,
+      "raw_response": {
+        "choices": [
+          {
+            "finish_reason": "stop",
+            "index": 0,
+            "message": {
+              "content": "**Timeout & Retry Checklist:**\n\n1.  **Timeouts:**\n    *   Set `httpx.Client(timeout=(connect_timeout, read_timeout))`\n    *   `connect_timeout`: Short (e.g., 1-3s), for establishing connection.\n    *   `read_timeout`: Longer (e.g., 5-30s), for receiving response bytes. Tune based on API SLOs.\n\n2.  **Retries:**\n    *   **Transient Failures Only:** Retry `httpx.ConnectError`, `httpx.ReadTimeout`, `httpx.HTTPStatusError` for 5xx codes, `httpx.NetworkError`.\n    *   **Exponential Backoff with Jitter:** `wait_time = min(max_wait_time, base_delay * (2^attempt) + jitter_ms)`.\n    *   **Honor `Retry-After`:** If present, use its value over calculated backoff.\n    *   **Bounded Attempts:** Set a `max_retries` (e.g., 3-5).\n    *   **Idempotency:** *Crucial*. **Only retry non-idempotent operations if protected by an idempotency key.** Otherwise, strictly retry only idempotent (GET, PUT with full state) or idempotent-by-design (some POSTs) operations.\n\n**Monitoring:** High \"API call duration\" p99 could reveal insufficient timeouts/retries masks true API latency.",
+              "role": "assistant"
+            }
+          }
+        ],
+        "created": 1791799689,
+        "id": "hbHMapipMMKyjuMPka-G2Q8",
+        "model": "gemini-2.5-flash",
+        "object": "chat.completion",
+        "usage": {
+          "completion_tokens": 319,
+          "prompt_tokens": 111,
+          "total_tokens": 430
+        }
+      },
+      "gateway_response_headers": {
+        "date": "Mon, 12 Oct 2026 10:08:03 GMT, Mon, 12 Oct 2026 10:08:09 GMT",
+        "server": "uvicorn, scaffolding on HTTPServer2",
+        "content-type": "application/json",
+        "vary": "Origin, X-Origin, Referer",
+        "x-xss-protection": "0",
+        "x-frame-options": "SAMEORIGIN",
+        "x-content-type-options": "nosniff",
+        "server-timing": "gfet4t7; dur=3820",
+        "alt-svc": "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000",
+        "x-greenway-request-id": "bedc47ec-846f-4d81-96bd-c0dedf11a626",
+        "x-greenway-content-hash": "1d9133f6148d587145635f0abbecb16eba76572c87cd8f27fa27e40e283e353e",
+        "x-greenway-input-tokens": "111",
+        "x-greenway-prompt-optimization": "optimized",
+        "x-greenway-prompt-optimization-changes": "role-added,word-cap-added",
+        "content-length": "1353",
+        "x-greenway-output-tokens": "319",
+        "x-greenway-token-source": "provider",
+        "x-greenway-energy-kwh": "0.0002566",
+        "x-greenway-carbon-gco2e": "0.097387213248",
+        "x-greenway-moer-kgperkwh": "0.31",
+        "x-greenway-carbon-source": "static_fallback",
+        "x-greenway-telemetry-source": "parametric_estimated",
+        "x-greenway-energy-source": "lca",
+        "x-greenway-normalization-ms": "1.125",
+        "x-greenway-proxy-ms": "3915.945",
+        "x-greenway-pool-acquire-ms": "1.582",
+        "x-greenway-round-trip-ms": "3908.632",
+        "x-greenway-response-read-ms": "0.83",
+        "x-greenway-latency-ms": "3917.85"
+      },
+      "metrics": {
+        "finish_reason": "stop",
+        "completion_tokens": 319,
+        "hidden_tokens": 0,
+        "word_count": 120,
+        "top_level_bullet_count": 2,
+        "total_bullet_lines": 10,
+        "heading_count": 0,
+        "counts_are_lower_bounds": false
+      },
+      "gateway": {
+        "token_count_source": "provider",
+        "telemetry_source": "parametric_estimated",
+        "energy_source_tier": "lca",
+        "energy_kwh": "0.0002566",
+        "carbon_source_tier": "static_fallback",
+        "carbon_gco2e": "0.097387213248"
+      },
+      "attempt_numbers": [
+        7
+      ]
+    },
+    {
+      "sample_number": 8,
+      "shape_number": 2,
+      "shape": "short_how_to",
+      "pair_number": 2,
+      "pair_position": 2,
+      "measurement_type": "paired",
+      "arm": "baseline",
+      "prompt": "Give a practical checklist for adding request timeouts and retries to a Python service that calls an external API. Cover choosing connect and read timeouts, retrying only transient failures, exponential backoff with jitter, honoring Retry-After, bounding total attempts, and avoiding retries for non-idempotent operations unless protected by an idempotency key. Include one monitoring signal that would reveal misconfiguration. Assume the service uses httpx and runs in production. Do not provide code.",
+      "url": "http://127.0.0.1:8000/v1/chat/completions",
+      "model": "gemini-2.5-flash",
+      "reasoning_effort": "none",
+      "max_tokens": 2048,
+      "prompt_optimization_arm": "baseline",
+      "prompt_optimization_changes": [],
+      "expected_prompt_optimization_changes": [],
+      "effective_prompt_content_hash": "0df61f337e74fbac24c153e329060057baf9b1cc6d12d45a8562195a9a173f86",
+      "effective_prompt": "Give a practical checklist for adding request timeouts and retries to a Python service that calls an external API. Cover choosing connect and read timeouts, retrying only transient failures, exponential backoff with jitter, honoring Retry-After, bounding total attempts, and avoiding retries for non-idempotent operations unless protected by an idempotency key. Include one monitoring signal that would reveal misconfiguration. Assume the service uses httpx and runs in production. Do not provide code.",
+      "prompt_tokens_tiktoken_estimate": 93,
+      "raw_response": {
+        "choices": [
+          {
+            "finish_reason": "stop",
+            "index": 0,
+            "message": {
+              "content": "Here's a practical checklist for adding request timeouts and retries to a Python service calling an external API using `httpx` in production:\n\n---\n\n## Practical Checklist: Request Timeouts and Retries\n\n### I. Selecting Connect and Read Timeouts\n\n*   **Connect Timeout (e.g., 2-5 seconds):**\n    *   Choose a value that's slightly longer than the typical network latency to establish a TCP connection, but short enough to quickly fail if the server is unreachable or its network congested.\n    *   Consider the geographical location of your service and the external API.\n    *   Start with a conservative value (e.g., 3s) and adjust based on network conditions and observed connection failures.\n*   **Read Timeout (e.g., 5-30 seconds):**\n    *   Choose a value that's longer than the typical expected processing time for the *fastest* successful response from the external API, but short enough to prevent holding resources indefinitely for slow or stuck responses.\n    *   Analyze the P99 response times of the external API for successful calls. Your read timeout should generally be below this to catch genuinely stuck requests promptly.\n    *   If the external API has different endpoints with vastly different response times, consider per-endpoint timeouts if possible, or use a generous enough global timeout that covers the slowest *expected* successful case.\n    *   Account for worst-case expected processing on the external API's side.\n\n### II. Designing the Retry Mechanism\n\n1.  **Identify Transient Failures for Retries:**\n    *   **Network Errors:** Connection refused, DNS resolution failures, TLS/SSL handshake errors, network reset, timeout errors (both connect and read). These are the primary targets for retries.\n    *   **HTTP Status Codes (Retryable):**\n        *   `408 Request Timeout`: Indicates the server timed out waiting for the client request.\n        *   `429 Too Many Requests`: Indicates rate limiting; must be handled with `Retry-After` if present.\n        *   `500 Internal Server Error`: Often indicates a transient server-side issue.\n        *   `502 Bad Gateway`: Upstream server issue.\n        *   `503 Service Unavailable`: Server temporarily unable to handle the request (e.g., overloaded, down for maintenance).\n        *   `504 Gateway Timeout`: Upstream server timed out.\n    *   **HTTP Status Codes (Non-Retryable - by default):**\n        *   `4xx` errors (except `408`, `429`): Usually indicate client-side errors (e.g., `400 Bad Request`, `401 Unauthorized`, `403 Forbidden`, `404 Not Found`). Retrying these will not fix the underlying issue and will only waste resources.\n        *   `501 Not Implemented`, `505 HTTP Version Not Supported`, etc.: Indicate fundamental API design issues, not transient problems.\n    *   **Custom Logic:** If the external API uses specific error codes or response bodies to indicate transient issues, incorporate them into your retry decision logic.\n\n2.  **Exponential Backoff with Jitter:**\n    *   **Base Delay:** Define a reasonable initial delay for the first retry (e.g., 0.5 - 1 second).\n    *   **Multiplier:** Apply an exponential multiplier for subsequent retries (e.g., 2x).\n    *   **Jitter:** Add a random component (e.g., 20-50%) to the calculated backoff delay. This prevents herd effects where multiple instances of your service retry simultaneously, overwhelming the external API.\n        *   *Example:* If calculated delay is 4s, apply `random.uniform(3.2, 4.8)` for a 20% jitter.\n    *   **Maximum Delay:** Set a sensible upper bound for the backoff delay to prevent extremely long waits between retries (e.g., 30 seconds to 1 minute).\n\n3.  **Honor `Retry-After` Header:**\n    *   If the external API returns a `429 Too Many Requests` or `503 Service Unavailable` status code and includes a `Retry-After` header, **always honor it**.\n    *   Parse the `Retry-After` header (can be a delta-seconds value or a specific date/time) and use that as the delay before the next retry, overriding the exponential backoff calculation.\n    *   Prioritize `Retry-After` over your own backoff logic when present.\n\n4.  **Bounding Total Attempts:**\n    *   **Max Retries:** Define a maximum number of retry attempts (e.g., 3-5). Beyond this, repeated failures indicate a more persistent problem that retries won't fix.\n    *   **Total Timeout:** Set an overall timeout for the *entire operation*, including all retries. This puts a hard limit on how long your service will wait for a response, regardless of individual retry delays. This prevents operations from hanging indefinitely.\n    *   When either the max retries or total timeout is reached, the operation should fail (e.g., raise an appropriate exception).\n\n### III. Idempotency Considerations\n\n1.  **Identify Non-Idempotent Operations:**\n    *   Operations that, when executed multiple times, could change the system state in unintended ways (e.g., `POST /create-order`, `POST /charge-credit-card`).\n    *   GET, PUT, and DELETE operations are generally considered idempotent by HTTP specification, but always verify the external API's behavior.\n\n2.  **Avoid Retries for Non-Idempotent Operations *Unless* Protected:**\n    *   If an operation is non-idempotent, **do not retry it** unless a robust idempotency mechanism is in place. Retrying a `POST /create-order` without protection could create duplicate orders.\n\n3.  **Implement Idempotency Keys (When Necessary):**\n    *   If non-idempotent operations *must* be retried, ensure the external API supports and you provide an **idempotency key** (e.g., an `Idempotency-Key` header with a unique UUID for each logical operation).\n    *   The external API should use this key to ensure that duplicate requests with the same key are processed only once.\n    *   Generate a unique idempotency key *before* the first attempt of the operation and reuse it for all subsequent retries of that *same logical operation*.\n\n### IV. Monitoring\n\n*   **Monitoring Signal:** **P99 Latency of *Failed* External API Calls Grouped by Failure Reason.**\n    *   This signal will immediately reveal misconfigurations related to timeouts and retries.\n    *   If your read timeout is too short, you'll see a spike in \"Read Timeout\" failures with a P99 latency very close to your configured read timeout.\n    *   If `Retry-After` isn't honored, you'll see repeated `429` or `503` errors from the same origin within short intervals.\n    *   If backoff is misconfigured, you might see a high volume of repeated transient errors in quick succession, or conversely, operations taking extremely long to fail when they should fail faster.\n    *   Tracking specific API error codes (e.g., `500`, `502`, `503`, `429`) and network errors (e.g., connection timed out) as distinct failure reasons allows for targeted debugging and adjustment.",
+              "role": "assistant"
+            }
+          }
+        ],
+        "created": 1791799714,
+        "id": "mbHMau2LLKnQjuMP79H0qAM",
+        "model": "gemini-2.5-flash",
+        "object": "chat.completion",
+        "usage": {
+          "completion_tokens": 1639,
+          "prompt_tokens": 95,
+          "total_tokens": 1734
+        }
+      },
+      "gateway_response_headers": {
+        "date": "Mon, 12 Oct 2026 10:08:24 GMT, Mon, 12 Oct 2026 10:08:34 GMT",
+        "server": "uvicorn, scaffolding on HTTPServer2",
+        "content-type": "application/json",
+        "vary": "Origin, X-Origin, Referer",
+        "x-xss-protection": "0",
+        "x-frame-options": "SAMEORIGIN",
+        "x-content-type-options": "nosniff",
+        "server-timing": "gfet4t7; dur=9505",
+        "alt-svc": "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000",
+        "x-greenway-request-id": "fb784cd7-045f-4987-91b7-96d7ca7d414a",
+        "x-greenway-content-hash": "0df61f337e74fbac24c153e329060057baf9b1cc6d12d45a8562195a9a173f86",
+        "x-greenway-input-tokens": "95",
+        "x-greenway-prompt-optimization": "baseline",
+        "x-greenway-prompt-optimization-changes": "",
+        "content-length": "7143",
+        "x-greenway-output-tokens": "1639",
+        "x-greenway-token-source": "provider",
+        "x-greenway-energy-kwh": "0.0011758",
+        "x-greenway-carbon-gco2e": "0.446250527424",
+        "x-greenway-moer-kgperkwh": "0.31",
+        "x-greenway-carbon-source": "static_fallback",
+        "x-greenway-telemetry-source": "parametric_estimated",
+        "x-greenway-energy-source": "lca",
+        "x-greenway-normalization-ms": "3.446",
+        "x-greenway-proxy-ms": "9621.868",
+        "x-greenway-pool-acquire-ms": "8.41",
+        "x-greenway-round-trip-ms": "9598.195",
+        "x-greenway-response-read-ms": "1.604",
+        "x-greenway-latency-ms": "9626.278"
+      },
+      "metrics": {
+        "finish_reason": "stop",
+        "completion_tokens": 1639,
+        "hidden_tokens": 0,
+        "word_count": 972,
+        "top_level_bullet_count": 10,
+        "total_bullet_lines": 51,
+        "heading_count": 5,
+        "counts_are_lower_bounds": false
+      },
+      "gateway": {
+        "token_count_source": "provider",
+        "telemetry_source": "parametric_estimated",
+        "energy_source_tier": "lca",
+        "energy_kwh": "0.0011758",
+        "carbon_source_tier": "static_fallback",
+        "carbon_gco2e": "0.446250527424"
+      },
+      "attempt_numbers": [
+        8
+      ]
+    }
+  ],
+  "attempts": [
+    {
+      "sample_number": 1,
+      "shape_number": 1,
+      "shape": "focused_explanation",
+      "pair_number": 1,
+      "pair_position": 1,
+      "measurement_type": "paired",
+      "arm": "baseline",
+      "prompt": "Explain why an API should use idempotency keys for requests that may be retried. Define an idempotency key, describe what the server stores and for how long at a high level, and distinguish a safe retry from a duplicated side effect. Assume the reader knows HTTP methods but has not designed a payment or job-submission endpoint. Use one brief example to illustrate the failure mode and the fix. Keep the explanation focused on request handling rather than implementation code.",
+      "url": "http://127.0.0.1:8000/v1/chat/completions",
+      "model": "gemini-2.5-flash",
+      "reasoning_effort": "none",
+      "max_tokens": 2048,
+      "attempt_number_for_sample": 1,
+      "attempted_at_utc": "2026-10-12T10:05:53.834009+00:00",
+      "status_code": 200,
+      "response_body": "{\"choices\":[{\"finish_reason\":\"stop\",\"index\":0,\"message\":{\"content\":\"An API should use idempotency keys for requests that may be retried to **prevent unintended duplicate side effects if a client resends the same logical request multiple times**. This is crucial for operations that alter state on the server, ensuring that a request is processed only once, even if it is received multiple times due to network issues, client retries, or server-side failures during the initial processing. Without idempotency, a simple retry could lead to significant problems like double-charging a customer or creating redundant job entries.\\n\\nAn **idempotency key** is a unique, client-generated string that is sent with a request to identify that specific operation. It's like a unique transaction ID that the client assigns to its *intent* to perform an action. Typically, it's a UUID (Universally Unique Identifier) or a similar strong random string.\\n\\nWhen a server receives a request with an idempotency key:\\n1. It first checks if it has already processed a request with that same key.\\n2. If it has, it will return the result of the *original, successful processing* without executing the operation again.\\n3. If it hasn't, it will process the request, store the idempotency key along with the successful result, and then return that result to the client.\\n\\nThe server stores the idempotency key along with some metadata, primarily the **outcome of the original successful request (e.g., the HTTP status code and response body)**. This allows the server to return the correct response if the same key is received again. This information is typically stored in a fast, accessible data store (like a cache or a dedicated idempotency table in a database). The server stores this information for a **configurable period**, often ranging from a few hours to a few days, depending on the expected retry window and storage considerations. Once this period expires, the key and its associated result are usually purged.\\n\\nThis mechanism distinguishes a **safe retry** from a **duplicated side effect**:\\n\\n*   **Safe Retry:** With idempotency keys, a retry is \\\"safe\\\" because if the original request was successful but the client didn't receive the confirmation, resending the request with the same key will simply return the original success response. No new side effects are generated on the server. The server recognizes the key, sees it was already successfully processed, and just sends back the previous result.\\n*   **Duplicated Side Effect:** Without idempotency keys, if a request that modifies state (like creating a payment) is retried, the server would treat it as a brand new request. This would lead to a \\\"duplicated side effect\\\" – for example, two payments being created instead of one, or two identical jobs being enqueued.\\n\\n---\\n\\n**Example:**\\n\\nImagine a client submits a request to charge a customer for an order.\\n\\n**Failure Mode (Without Idempotency Key):**\\n\\n1.  Client sends `POST /charges` with payment details.\\n2.  Server successfully processes the payment and charges the customer's card.\\n3.  **Network glitch occurs:** The server's success response (`HTTP 200 OK`) fails to reach the client.\\n4.  Client, not knowing if the charge went through, assumes failure and **retries** the identical `POST /charges` request.\\n5.  Server (without idempotency logic) receives this as a *new* request and processes it again.\\n6.  **Result:** The customer is double-charged. This is a duplicated side effect.\\n\\n**Fix (With Idempotency Key):**\\n\\n1.  Client generates a unique `Idempotency-Key: abc-123` and sends `POST /charges` with this key and payment details.\\n2.  Server receives the request. It checks its idempotency store, finds `abc-123` is *not* present.\\n3.  Server successfully processes the payment, charges the customer's card, and stores `abc-123` along with the `HTTP 200 OK` response.\\n4.  **Network glitch occurs:** The server's `HTTP 200 OK` response fails to reach the client.\\n5.  Client, not knowing if the charge went through, assumes failure and **retries** the `POST /charges` request, crucially using the *same* `Idempotency-Key: abc-123`.\\n6.  Server receives the request with `Idempotency-Key: abc-123`. It checks its idempotency store, finds `abc-123` *is* present and was associated with an `HTTP 200 OK` response.\\n7.  Server does *not* process the payment again. Instead, it immediately returns the *original* `HTTP 200 OK` response (which it had stored) to the client.\\n8.  **Result:** The customer is charged only once. The client receives confirmation of the original success, making it a safe retry.\",\"role\":\"assistant\"}}],\"created\":1791799560,\"id\":\"ArHMao24IueB2roPjLLbGQ\",\"model\":\"gemini-2.5-flash\",\"object\":\"chat.completion\",\"usage\":{\"completion_tokens\":1048,\"prompt_tokens\":92,\"total_tokens\":1140}}"
+    },
+    {
+      "sample_number": 2,
+      "shape_number": 1,
+      "shape": "focused_explanation",
+      "pair_number": 1,
+      "pair_position": 2,
+      "measurement_type": "paired",
+      "arm": "optimized",
+      "prompt": "Explain why an API should use idempotency keys for requests that may be retried. Define an idempotency key, describe what the server stores and for how long at a high level, and distinguish a safe retry from a duplicated side effect. Assume the reader knows HTTP methods but has not designed a payment or job-submission endpoint. Use one brief example to illustrate the failure mode and the fix. Keep the explanation focused on request handling rather than implementation code.",
+      "url": "http://127.0.0.1:8002/v1/chat/completions",
+      "model": "gemini-2.5-flash",
+      "reasoning_effort": "none",
+      "max_tokens": 2048,
+      "attempt_number_for_sample": 1,
+      "attempted_at_utc": "2026-10-12T10:06:16.632684+00:00",
+      "status_code": 200,
+      "response_body": "{\"choices\":[{\"finish_reason\":\"stop\",\"index\":0,\"message\":{\"content\":\"Idempotency keys prevent duplicate side effects from retried requests. An idempotency key is a unique token (e.g., UUID) sent by the client with the request. The server stores this key with the request's outcome (success/failure) for a limited time (e.g., 24 hours, or until the operation is considered \\\"finalized\\\").\\n\\nA safe retry re-executes a request without altering system state if the first attempt already succeeded. A duplicated side effect executes the operation again, causing unintended changes.\\n\\n**Example:** A `POST /payments` request to charge $100 fails due to network timeout *after* the payment processor confirms success. Without an idempotency key, retrying the `POST` would charge $100 *again*. With a key, the server sees the key, retrieves the previous successful outcome, and returns it, preventing a double charge.\",\"role\":\"assistant\"}}],\"created\":1791799579,\"id\":\"GbHMaovSEuyt0-kP7OXqGQ\",\"model\":\"gemini-2.5-flash\",\"object\":\"chat.completion\",\"usage\":{\"completion_tokens\":187,\"prompt_tokens\":108,\"total_tokens\":295}}"
+    },
+    {
+      "sample_number": 3,
+      "shape_number": 1,
+      "shape": "focused_explanation",
+      "pair_number": 2,
+      "pair_position": 1,
+      "measurement_type": "paired",
+      "arm": "optimized",
+      "prompt": "Explain why an API should use idempotency keys for requests that may be retried. Define an idempotency key, describe what the server stores and for how long at a high level, and distinguish a safe retry from a duplicated side effect. Assume the reader knows HTTP methods but has not designed a payment or job-submission endpoint. Use one brief example to illustrate the failure mode and the fix. Keep the explanation focused on request handling rather than implementation code.",
+      "url": "http://127.0.0.1:8002/v1/chat/completions",
+      "model": "gemini-2.5-flash",
+      "reasoning_effort": "none",
+      "max_tokens": 2048,
+      "attempt_number_for_sample": 1,
+      "attempted_at_utc": "2026-10-12T10:06:34.900616+00:00",
+      "status_code": 200,
+      "response_body": "{\"choices\":[{\"finish_reason\":\"stop\",\"index\":0,\"message\":{\"content\":\"APIs use idempotency keys for retried requests to prevent unintended side effects. An idempotency key is a unique, client-generated token for each *logical* request. The server stores this key with the request's result (e.g., \\\"success\\\" or \\\"failed transaction ID\\\") for a limited time (e.g., 24 hours).\\n\\n**Safe Retry vs. Duplicated Side Effect:**\\n*   A **safe retry** means re-sending the same request with the *same* idempotency key. The server detects the key, returns the original result, and avoids processing it again.\\n*   A **duplicated side effect** occurs without an idempotency key. The server treats each retry as a *new* request, leading to multiple executions (e.g., charging a customer twice).\\n\\n**Example:**\\n*   **Failure:** User submits \\\"Pay $100\\\" request, network times out. User retries. Without an idempotency key, the API charges $100 *twice*.\\n*   **Fix:** User client generates `id-key-A1`. First request fails. User retries with *same* `id-key-A1`. Server sees `id-key-A1` already processed (or processing) and returns original success/failure status, preventing duplicate charges.\",\"role\":\"assistant\"}}],\"created\":1791799598,\"id\":\"LLHMasG0BIim2roP_t7X-AM\",\"model\":\"gemini-2.5-flash\",\"object\":\"chat.completion\",\"usage\":{\"completion_tokens\":277,\"prompt_tokens\":108,\"total_tokens\":385}}"
+    },
+    {
+      "sample_number": 4,
+      "shape_number": 1,
+      "shape": "focused_explanation",
+      "pair_number": 2,
+      "pair_position": 2,
+      "measurement_type": "paired",
+      "arm": "baseline",
+      "prompt": "Explain why an API should use idempotency keys for requests that may be retried. Define an idempotency key, describe what the server stores and for how long at a high level, and distinguish a safe retry from a duplicated side effect. Assume the reader knows HTTP methods but has not designed a payment or job-submission endpoint. Use one brief example to illustrate the failure mode and the fix. Keep the explanation focused on request handling rather than implementation code.",
+      "url": "http://127.0.0.1:8000/v1/chat/completions",
+      "model": "gemini-2.5-flash",
+      "reasoning_effort": "none",
+      "max_tokens": 2048,
+      "attempt_number_for_sample": 1,
+      "attempted_at_utc": "2026-10-12T10:06:53.853495+00:00",
+      "status_code": 200,
+      "response_body": "{\"choices\":[{\"finish_reason\":\"stop\",\"index\":0,\"message\":{\"content\":\"When an API request might be retried due to network issues, server timeouts, or client-side errors, it's crucial to ensure that processing the request multiple times doesn't lead to unintended duplicated side effects. This is where idempotency keys come in.\\n\\n### Why an API Should Use Idempotency Keys\\n\\nAn API should use idempotency keys for retriable requests to guarantee that the same logical operation is performed *at most once*, even if the request is submitted multiple times. Without an idempotency key, a retried request could be processed by the server as a new, distinct request, leading to erroneous duplicate actions.\\n\\n**Example Failure Mode:**\\n\\nImagine a client wants to transfer \\\\$100 from Account A to Account B.\\n1. The client sends a `POST /transfers` request with the transfer details.\\n2. The server successfully processes the transfer (debits A, credits B).\\n3. The server attempts to send a success response back to the client.\\n4. Due to a network glitch, the success response never reaches the client.\\n5. The client, unaware of the success, retries the **exact same `POST /transfers` request**.\\n6. Without idempotency, the server processes this as a *new* transfer, resulting in Account A being debited *another* \\\\$100 and Account B being credited *another* \\\\$100. This is a duplicated side effect.\\n\\n**The Fix with Idempotency Keys:**\\n\\nBy including an idempotency key with the original request and subsequent retries, the server can detect and prevent this duplication.\\n\\n### What is an Idempotency Key?\\n\\nAn **idempotency key** is a unique, client-generated identifier that accompanies a request. It signals to the server that all requests bearing the same key represent the *same logical operation*. Typically, it's a UUID (Universally Unique Identifier) or another sufficiently random and collision-resistant string generated by the client.\\n\\n### What the Server Stores and For How Long\\n\\nWhen the server receives a request with an idempotency key for the first time:\\n\\n1.  It processes the request (e.g., performs the transfer).\\n2.  It stores a record associating the **idempotency key** with the **outcome of that request**. The outcome includes the status code, response headers, and response body that would be returned to the client. It might also store an internal status indicating whether the operation is `pending`, `completed`, or `failed`.\\n3.  This stored state is generally kept for a limited duration, often 24 hours or longer, depending on the expected retry window and the server's storage capacity. The period should be long enough to cover typical retry scenarios but not indefinitely, as keys will eventually expire and can be safely re-used by the client for truly new *different* operations.\\n\\nIf the server later receives another request with the *same* idempotency key:\\n\\n*   It checks its stored records.\\n*   If it finds a matching key and the original operation has already completed successfully, it **does not re-process the request**. Instead, it returns the *same response* that was generated during the initial successful processing.\\n*   If the original operation is still `pending`, the server might return a \\\"conflict\\\" (e.g., 409 Conflict) or wait for the initial operation to complete before returning its result.\\n\\n### Distinguishing a Safe Retry from a Duplicated Side Effect\\n\\n*   **Duplicated Side Effect:** This occurs when a server processes the *same logical operation* multiple times, leading to multiple changes in the system's state or external interactions (like sending multiple emails, debiting an account multiple times, or submitting multiple identical jobs). This is what idempotency keys prevent.\\n    *   **Example (without idempotency):** Client sends `POST /orders` for \\\"Product X\\\". Response lost. Client retries. Server creates a *second* order for \\\"Product X\\\".\\n*   **Safe Retry:** This occurs when a server receives a retried request and, thanks to an idempotency key, recognizes it as a re-submission of an already performed or in-progress operation. Instead of re-executing the operation, it simply returns the cached result of the original operation or confirms its ongoing status. The system's state is not altered *again* by the retry.\\n    *   **Example (with idempotency):** Client sends `POST /orders` with `Idempotency-Key: abc-123` for \\\"Product X\\\". Response lost. Client retries the same `POST /orders` with `Idempotency-Key: abc-123`. Server finds `abc-123` in its records, sees that the order for \\\"Product X\\\" was successfully created, and returns the *original success response* without creating a new order.\\n\\nIn essence, idempotency keys transform potentially harmful retries into safe queries for the status or outcome of a previously initiated operation, ensuring the system remains consistent even in the face of unreliable networks or client behavior.\",\"role\":\"assistant\"}}],\"created\":1791799622,\"id\":\"PrHMauqaMramg8UPwavG0QY\",\"model\":\"gemini-2.5-flash\",\"object\":\"chat.completion\",\"usage\":{\"completion_tokens\":1063,\"prompt_tokens\":92,\"total_tokens\":1155}}"
+    },
+    {
+      "sample_number": 5,
+      "shape_number": 2,
+      "shape": "short_how_to",
+      "pair_number": 1,
+      "pair_position": 1,
+      "measurement_type": "paired",
+      "arm": "baseline",
+      "prompt": "Give a practical checklist for adding request timeouts and retries to a Python service that calls an external API. Cover choosing connect and read timeouts, retrying only transient failures, exponential backoff with jitter, honoring Retry-After, bounding total attempts, and avoiding retries for non-idempotent operations unless protected by an idempotency key. Include one monitoring signal that would reveal misconfiguration. Assume the service uses httpx and runs in production. Do not provide code.",
+      "url": "http://127.0.0.1:8000/v1/chat/completions",
+      "model": "gemini-2.5-flash",
+      "reasoning_effort": "none",
+      "max_tokens": 2048,
+      "attempt_number_for_sample": 1,
+      "attempted_at_utc": "2026-10-12T10:07:17.961123+00:00",
+      "status_code": 200,
+      "response_body": "{\"choices\":[{\"finish_reason\":\"stop\",\"index\":0,\"message\":{\"content\":\"## Practical Checklist for Adding Request Timeouts and Retries to a Python Service (httpx)\\n\\nThis checklist focuses on practical considerations for integrating robust timeout and retry logic when calling an external API from a production Python service using `httpx`.\\n\\n### 1. Initial Timeout Configuration (Connect & Read)\\n\\n*   **Choose `connect_timeout` (Connection Establishment):**\\n    *   **Baseline:** Start with a value that is slightly more than the typical network round-trip time (RTT) to the external API endpoint.\\n    *   **Considerations:** Account for potential DNS resolution delays, TLS handshake, and general network congestion.\\n    *   **Goal:** Fail fast if you can't even establish a connection. A common starting point is between **2-5 seconds**.\\n*   **Choose `read_timeout` (Response Body Reading):**\\n    *   **Baseline:** Determine the maximum expected time for the external API to *process* the request and return the *entire* response body.\\n    *   **Considerations:**\\n        *   Ask the API provider for typical and maximum response times for the specific endpoints you're calling.\\n        *   Factor in data transfer size – larger responses take longer to stream.\\n        *   Avoid excessively long read timeouts if the API is typically fast; it ties up resources.\\n    *   **Goal:** Release resources if the API is taking too long to send data. This is often the more significant timeout for application logic and can range from **10 seconds to several minutes** depending on the API's nature.\\n*   **Total Timeout (Implicit):** Be aware that `connect_timeout` + `read_timeout` (plus any internal processing time before the read timeout starts) represents the maximum time *you're willing to wait* for a successful response *without* considering retries.\\n\\n### 2. Identifying Transient Failures for Retries\\n\\n*   **HTTP Status Codes:**\\n    *   **Retry:** `500 Internal Server Error`, `502 Bad Gateway`, `503 Service Unavailable`, `504 Gateway Timeout`. These typically indicate server-side issues that *might* resolve themselves.\\n    *   **Do NOT Retry:** `4xx` client errors (e.g., `400 Bad Request`, `401 Unauthorized`, `403 Forbidden`, `404 Not Found`, `429 Too Many Requests` - see `Retry-After` below). These indicate issues with *your* request or your client's state, and re-attempting won't change the outcome.\\n*   **Network Errors (Exceptions):**\\n    *   **Retry:** `httpx.ConnectError`, `httpx.NetworkError` (general network issues), `httpx.TimeoutException` (connect or read timeouts). These signify that the network or the API was unreachable/unresponsive, making a retry potentially fruitful.\\n    *   **Do NOT Retry (on their own):** Specific exceptions that indicate a fundamental misconfiguration (e.g., `httpx.InvalidURL`).\\n*   **Consider Partial Data:** If the API can return partial data with a success code, ensure your parsing logic handles this gracefully before deciding if a retry is warranted.\\n\\n### 3. Implementing Exponential Backoff with Jitter\\n\\n*   **Exponential Backoff Core:**\\n    *   Initial delay: Choose a small base delay (e.g., 0.1s to 1s).\\n    *   Subsequent delays: Multiply the previous delay by a factor (e.g., 2) for each retry.\\n    *   Example: 0.5s, 1s, 2s, 4s, 8s...\\n*   **Jitter (Crucial for Distributed Systems):**\\n    *   **Purpose:** Prevent \\\"thundering herd\\\" issues where many clients retry simultaneously after an outage, overwhelming the recovering API.\\n    *   **Implementation:** Add a random amount of time to the calculated backoff delay.\\n    *   **Types:**\\n        *   **Full Jitter:** Randomly choose a delay between 0 and `min(max_backoff, base * (2^attempt))`.\\n        *   **Decorrelated Jitter:** `sleep = min(max_backoff, random(base, sleep * 3))`.\\n    *   **Recommendation:** Use **full jitter** for simplicity and effectiveness.\\n\\n### 4. Honoring `Retry-After` Headers\\n\\n*   **Priority:** If an API responds with `429 Too Many Requests` or `503 Service Unavailable` and includes a `Retry-After` header, **always honor it immediately**.\\n*   **Parse Value:**\\n    *   **Seconds:** If `Retry-After` is an integer, wait for that many seconds.\\n    *   **HTTP Date:** If `Retry-After` is an HTTP date, calculate the difference from the current time and wait that many seconds.\\n*   **Override Backoff:** The `Retry-After` value should supersede any calculated exponential backoff for that specific retry attempt.\\n\\n### 5. Bounding Total Attempts and Total Time\\n\\n*   **Maximum Retries:**\\n    *   **Reason:** Prevent infinite loops and ensure resource eventual release.\\n    *   **Considerations:** How critical is the operation? How long are you willing to wait for eventual consistency? A common range is **3-5 attempts**.\\n*   **Maximum Total Time:**\\n    *   **Reason:** Even with limited retries, backoff can lead to very long overall wait times.\\n    *   **Considerations:** What's the acceptable end-to-end latency for this specific operation in your service?\\n    *   **Implementation:** Introduce an absolute maximum time duration for *all* attempts, including initial request and all retries/delays. If this duration is exceeded, give up.\\n    *   **Example:** For a critical request that *must* happen, maybe 1 minute. For a background task, perhaps 5 minutes.\\n\\n### 6. Idempotency and Non-Idempotent Operations\\n\\n*   **Understand Idempotency:** An operation is *idempotent* if applying it multiple times has the same effect as applying it once (e.g., `GET`, `PUT` if it's an upsert, `DELETE`).\\n*   **Avoid Retries for Non-Idempotent Operations (Unless Protected):**\\n    *   **Non-Idempotent Example:** A `POST` request to create a new resource (e.g., `POST /orders`). Retrying this without protection could create duplicate orders.\\n    *   **Protection (Idempotency Key):** If the external API supports it, include an **idempotency key** (a unique value generated by *your* service for each logical operation) in the request headers (e.g., `Idempotency-Key: <UUID>`). The API uses this key to detect and de-duplicate repeated requests.\\n    *   **Rule:**\\n        *   **Idempotent operations:** Safe to retry without extra protection.\\n        *   **Non-idempotent operations:** **DO NOT RETRY** them unless you are *certain* the external API handles idempotency for them (e.g., via an idempotency key mechanism). If not, it's better to fail immediately and let a human or an asynchronous compensation mechanism handle potential missed operations.\\n\\n### 7. Monitoring Signal for Misconfiguration\\n\\n*   **Signal:** **`http_request_total_duration_buckets_seconds` (Histogram/Distribution)**, specifically focusing on the higher percentiles (p95, p99, max) and the total count of requests that reached these higher values. Also, track the count of successful vs. failed retries.\\n\\n*   **How it reveals misconfiguration:**\\n    *   **Too Short `read_timeout` / Max Attempts:** You'll see an elevated number of `httpx.TimeoutException` errors (or an increase in 5xx errors if the API is *really* slow) without successful retries. The *duration* of these failed requests will be clustered around your `read_timeout` value, indicating you're cutting off too early.\\n    *   **Too Long `read_timeout` / Max Attempts:** You'll observe very high p95/p99 latency for your external API calls, indicating your service is waiting unnecessarily long for slow API responses or retries are taking an excessive amount of wall-clock time before eventually failing or succeeding. Your service resource utilization (e.g., thread/connection pool exhaustion) might also increase.\\n    *   **Ineffective Retries (e.g., retrying 4xx):** An increase in `4xx` responses being logged *after* retry attempts, indicating your retry logic is wasting time on non-transient failures.\\n    *   **Thundering Herd (Lack of Jitter):** If the external API experiences a brief outage, you might see a sudden, sharp spike in successful requests *immediately after* the outage, which could indicate that many of your services are retrying at the same precise moment. This signals a need to review jitter implementation.\\n\\nBy carefully applying this checklist and monitoring the suggested metrics, you can build a more resilient and performant Python service that gracefully handles external API flakiness.\",\"role\":\"assistant\"}}],\"created\":1791799650,\"id\":\"VrHMavPHNdasg8UPsvqpqQI\",\"model\":\"gemini-2.5-flash\",\"object\":\"chat.completion\",\"usage\":{\"completion_tokens\":1993,\"prompt_tokens\":95,\"total_tokens\":2088}}"
+    },
+    {
+      "sample_number": 6,
+      "shape_number": 2,
+      "shape": "short_how_to",
+      "pair_number": 1,
+      "pair_position": 2,
+      "measurement_type": "paired",
+      "arm": "optimized",
+      "prompt": "Give a practical checklist for adding request timeouts and retries to a Python service that calls an external API. Cover choosing connect and read timeouts, retrying only transient failures, exponential backoff with jitter, honoring Retry-After, bounding total attempts, and avoiding retries for non-idempotent operations unless protected by an idempotency key. Include one monitoring signal that would reveal misconfiguration. Assume the service uses httpx and runs in production. Do not provide code.",
+      "url": "http://127.0.0.1:8002/v1/chat/completions",
+      "model": "gemini-2.5-flash",
+      "reasoning_effort": "none",
+      "max_tokens": 2048,
+      "attempt_number_for_sample": 1,
+      "attempted_at_utc": "2026-10-12T10:07:45.993759+00:00",
+      "status_code": 200,
+      "response_body": "{\"choices\":[{\"finish_reason\":\"stop\",\"index\":0,\"message\":{\"content\":\"**Request Timeouts & Retries Checklist (httpx, External API)**\\n\\n1.  **Timeouts:**\\n    *   **`connect_timeout`:** Short (e.g., 2-5s). For TCP handshake.\\n    *   **`read_timeout`:** Longer (e.g., 10-30s). For data transfer. Choose based on expected API response times.\\n\\n2.  **Retries:**\\n    *   **Conditions:** Only retry `httpx.ConnectError`, `httpx.TimeoutException`, and HTTP 5xx *internal* server errors (excluding 501, 505, etc.).\\n    *   **Backoff:** Implement exponential backoff (e.g., `min_delay * (factor ** attempt_num)`) plus jitter to prevent thundering herd.\\n    *   **`Retry-After`:** Honor `Retry-After` header if present.\\n    *   **Max Attempts:** Define a maximum number of retry attempts (e.g., 3-5).\\n    *   **Idempotency:** *Crucial*. Do NOT retry non-idempotent operations (POST, PUT without full payload, PATCH, DELETE) unless protected by an idempotency key (e.g., a UUID in a custom header).\\n\\n**Monitoring Signal:**\\nIncreased \\\"API call latency (p99)\\\" for the external API, combined with a steady or decreasing \\\"API call success rate,\\\" indicates potential misconfigured timeouts or retries causing slow successes or cascading failures.\",\"role\":\"assistant\"}}],\"created\":1791799669,\"id\":\"crHMaqOJNeaZjuMPpaTYiQI\",\"model\":\"gemini-2.5-flash\",\"object\":\"chat.completion\",\"usage\":{\"completion_tokens\":327,\"prompt_tokens\":111,\"total_tokens\":438}}"
+    },
+    {
+      "sample_number": 7,
+      "shape_number": 2,
+      "shape": "short_how_to",
+      "pair_number": 2,
+      "pair_position": 1,
+      "measurement_type": "paired",
+      "arm": "optimized",
+      "prompt": "Give a practical checklist for adding request timeouts and retries to a Python service that calls an external API. Cover choosing connect and read timeouts, retrying only transient failures, exponential backoff with jitter, honoring Retry-After, bounding total attempts, and avoiding retries for non-idempotent operations unless protected by an idempotency key. Include one monitoring signal that would reveal misconfiguration. Assume the service uses httpx and runs in production. Do not provide code.",
+      "url": "http://127.0.0.1:8002/v1/chat/completions",
+      "model": "gemini-2.5-flash",
+      "reasoning_effort": "none",
+      "max_tokens": 2048,
+      "attempt_number_for_sample": 1,
+      "attempted_at_utc": "2026-10-12T10:08:04.874585+00:00",
+      "status_code": 200,
+      "response_body": "{\"choices\":[{\"finish_reason\":\"stop\",\"index\":0,\"message\":{\"content\":\"**Timeout & Retry Checklist:**\\n\\n1.  **Timeouts:**\\n    *   Set `httpx.Client(timeout=(connect_timeout, read_timeout))`\\n    *   `connect_timeout`: Short (e.g., 1-3s), for establishing connection.\\n    *   `read_timeout`: Longer (e.g., 5-30s), for receiving response bytes. Tune based on API SLOs.\\n\\n2.  **Retries:**\\n    *   **Transient Failures Only:** Retry `httpx.ConnectError`, `httpx.ReadTimeout`, `httpx.HTTPStatusError` for 5xx codes, `httpx.NetworkError`.\\n    *   **Exponential Backoff with Jitter:** `wait_time = min(max_wait_time, base_delay * (2^attempt) + jitter_ms)`.\\n    *   **Honor `Retry-After`:** If present, use its value over calculated backoff.\\n    *   **Bounded Attempts:** Set a `max_retries` (e.g., 3-5).\\n    *   **Idempotency:** *Crucial*. **Only retry non-idempotent operations if protected by an idempotency key.** Otherwise, strictly retry only idempotent (GET, PUT with full state) or idempotent-by-design (some POSTs) operations.\\n\\n**Monitoring:** High \\\"API call duration\\\" p99 could reveal insufficient timeouts/retries masks true API latency.\",\"role\":\"assistant\"}}],\"created\":1791799689,\"id\":\"hbHMapipMMKyjuMPka-G2Q8\",\"model\":\"gemini-2.5-flash\",\"object\":\"chat.completion\",\"usage\":{\"completion_tokens\":319,\"prompt_tokens\":111,\"total_tokens\":430}}"
+    },
+    {
+      "sample_number": 8,
+      "shape_number": 2,
+      "shape": "short_how_to",
+      "pair_number": 2,
+      "pair_position": 2,
+      "measurement_type": "paired",
+      "arm": "baseline",
+      "prompt": "Give a practical checklist for adding request timeouts and retries to a Python service that calls an external API. Cover choosing connect and read timeouts, retrying only transient failures, exponential backoff with jitter, honoring Retry-After, bounding total attempts, and avoiding retries for non-idempotent operations unless protected by an idempotency key. Include one monitoring signal that would reveal misconfiguration. Assume the service uses httpx and runs in production. Do not provide code.",
+      "url": "http://127.0.0.1:8000/v1/chat/completions",
+      "model": "gemini-2.5-flash",
+      "reasoning_effort": "none",
+      "max_tokens": 2048,
+      "attempt_number_for_sample": 1,
+      "attempted_at_utc": "2026-10-12T10:08:24.809026+00:00",
+      "status_code": 200,
+      "response_body": "{\"choices\":[{\"finish_reason\":\"stop\",\"index\":0,\"message\":{\"content\":\"Here's a practical checklist for adding request timeouts and retries to a Python service calling an external API using `httpx` in production:\\n\\n---\\n\\n## Practical Checklist: Request Timeouts and Retries\\n\\n### I. Selecting Connect and Read Timeouts\\n\\n*   **Connect Timeout (e.g., 2-5 seconds):**\\n    *   Choose a value that's slightly longer than the typical network latency to establish a TCP connection, but short enough to quickly fail if the server is unreachable or its network congested.\\n    *   Consider the geographical location of your service and the external API.\\n    *   Start with a conservative value (e.g., 3s) and adjust based on network conditions and observed connection failures.\\n*   **Read Timeout (e.g., 5-30 seconds):**\\n    *   Choose a value that's longer than the typical expected processing time for the *fastest* successful response from the external API, but short enough to prevent holding resources indefinitely for slow or stuck responses.\\n    *   Analyze the P99 response times of the external API for successful calls. Your read timeout should generally be below this to catch genuinely stuck requests promptly.\\n    *   If the external API has different endpoints with vastly different response times, consider per-endpoint timeouts if possible, or use a generous enough global timeout that covers the slowest *expected* successful case.\\n    *   Account for worst-case expected processing on the external API's side.\\n\\n### II. Designing the Retry Mechanism\\n\\n1.  **Identify Transient Failures for Retries:**\\n    *   **Network Errors:** Connection refused, DNS resolution failures, TLS/SSL handshake errors, network reset, timeout errors (both connect and read). These are the primary targets for retries.\\n    *   **HTTP Status Codes (Retryable):**\\n        *   `408 Request Timeout`: Indicates the server timed out waiting for the client request.\\n        *   `429 Too Many Requests`: Indicates rate limiting; must be handled with `Retry-After` if present.\\n        *   `500 Internal Server Error`: Often indicates a transient server-side issue.\\n        *   `502 Bad Gateway`: Upstream server issue.\\n        *   `503 Service Unavailable`: Server temporarily unable to handle the request (e.g., overloaded, down for maintenance).\\n        *   `504 Gateway Timeout`: Upstream server timed out.\\n    *   **HTTP Status Codes (Non-Retryable - by default):**\\n        *   `4xx` errors (except `408`, `429`): Usually indicate client-side errors (e.g., `400 Bad Request`, `401 Unauthorized`, `403 Forbidden`, `404 Not Found`). Retrying these will not fix the underlying issue and will only waste resources.\\n        *   `501 Not Implemented`, `505 HTTP Version Not Supported`, etc.: Indicate fundamental API design issues, not transient problems.\\n    *   **Custom Logic:** If the external API uses specific error codes or response bodies to indicate transient issues, incorporate them into your retry decision logic.\\n\\n2.  **Exponential Backoff with Jitter:**\\n    *   **Base Delay:** Define a reasonable initial delay for the first retry (e.g., 0.5 - 1 second).\\n    *   **Multiplier:** Apply an exponential multiplier for subsequent retries (e.g., 2x).\\n    *   **Jitter:** Add a random component (e.g., 20-50%) to the calculated backoff delay. This prevents herd effects where multiple instances of your service retry simultaneously, overwhelming the external API.\\n        *   *Example:* If calculated delay is 4s, apply `random.uniform(3.2, 4.8)` for a 20% jitter.\\n    *   **Maximum Delay:** Set a sensible upper bound for the backoff delay to prevent extremely long waits between retries (e.g., 30 seconds to 1 minute).\\n\\n3.  **Honor `Retry-After` Header:**\\n    *   If the external API returns a `429 Too Many Requests` or `503 Service Unavailable` status code and includes a `Retry-After` header, **always honor it**.\\n    *   Parse the `Retry-After` header (can be a delta-seconds value or a specific date/time) and use that as the delay before the next retry, overriding the exponential backoff calculation.\\n    *   Prioritize `Retry-After` over your own backoff logic when present.\\n\\n4.  **Bounding Total Attempts:**\\n    *   **Max Retries:** Define a maximum number of retry attempts (e.g., 3-5). Beyond this, repeated failures indicate a more persistent problem that retries won't fix.\\n    *   **Total Timeout:** Set an overall timeout for the *entire operation*, including all retries. This puts a hard limit on how long your service will wait for a response, regardless of individual retry delays. This prevents operations from hanging indefinitely.\\n    *   When either the max retries or total timeout is reached, the operation should fail (e.g., raise an appropriate exception).\\n\\n### III. Idempotency Considerations\\n\\n1.  **Identify Non-Idempotent Operations:**\\n    *   Operations that, when executed multiple times, could change the system state in unintended ways (e.g., `POST /create-order`, `POST /charge-credit-card`).\\n    *   GET, PUT, and DELETE operations are generally considered idempotent by HTTP specification, but always verify the external API's behavior.\\n\\n2.  **Avoid Retries for Non-Idempotent Operations *Unless* Protected:**\\n    *   If an operation is non-idempotent, **do not retry it** unless a robust idempotency mechanism is in place. Retrying a `POST /create-order` without protection could create duplicate orders.\\n\\n3.  **Implement Idempotency Keys (When Necessary):**\\n    *   If non-idempotent operations *must* be retried, ensure the external API supports and you provide an **idempotency key** (e.g., an `Idempotency-Key` header with a unique UUID for each logical operation).\\n    *   The external API should use this key to ensure that duplicate requests with the same key are processed only once.\\n    *   Generate a unique idempotency key *before* the first attempt of the operation and reuse it for all subsequent retries of that *same logical operation*.\\n\\n### IV. Monitoring\\n\\n*   **Monitoring Signal:** **P99 Latency of *Failed* External API Calls Grouped by Failure Reason.**\\n    *   This signal will immediately reveal misconfigurations related to timeouts and retries.\\n    *   If your read timeout is too short, you'll see a spike in \\\"Read Timeout\\\" failures with a P99 latency very close to your configured read timeout.\\n    *   If `Retry-After` isn't honored, you'll see repeated `429` or `503` errors from the same origin within short intervals.\\n    *   If backoff is misconfigured, you might see a high volume of repeated transient errors in quick succession, or conversely, operations taking extremely long to fail when they should fail faster.\\n    *   Tracking specific API error codes (e.g., `500`, `502`, `503`, `429`) and network errors (e.g., connection timed out) as distinct failure reasons allows for targeted debugging and adjustment.\",\"role\":\"assistant\"}}],\"created\":1791799714,\"id\":\"mbHMau2LLKnQjuMP79H0qAM\",\"model\":\"gemini-2.5-flash\",\"object\":\"chat.completion\",\"usage\":{\"completion_tokens\":1639,\"prompt_tokens\":95,\"total_tokens\":1734}}"
+    }
+  ],
+  "evaluation": null
+}
