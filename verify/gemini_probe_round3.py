@@ -25,7 +25,7 @@ from verify.gemini_probe_round3_scoring import (
     create_blinded_sheet,
 )
 
-PREREGISTRATION_COMMIT = "f2a0db3a03ce0799c9f0cb85d7e46743197bfe4"
+PREREGISTRATION_COMMIT = "f2a0db38a03ce0799c9f0cb85d7e46743197bfe4"
 MAX_TOKENS = 2048
 PAIRS_PER_SHAPE = 2
 PLANNED_REQUESTS = 8
