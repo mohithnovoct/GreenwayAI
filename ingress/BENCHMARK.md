@@ -265,30 +265,137 @@ Earlier partial Gemini samples ended with `finish_reason=length`; their short
 visible text alone does not establish why. The previous explanation that
 Gemini's default output limit caused the short responses was unsupported:
 thinking-token consumption, output limits, and other causes were not isolated.
-Do not treat that hypothesis as confirmed until the controlled probe below
-reports raw usage details and finish reasons.
+The controlled probe below tests the theory. Usage arithmetic supports the
+thinking-token explanation for the original 256-token response, but the raw
+usage object does not expose a separate thought-token detail. Raising the
+limit to 512 with `reasoning_effort="none"` still ends at the 512-token output
+ceiling, so those longer responses are directly explained by that configured
+limit.
 
-The probe plan uses the 159-token sustainability-review prompt and requests
-these three responses in order: baseline with default thinking and
-`max_tokens=256`; baseline with `reasoning_effort="none"` and `max_tokens=512`;
-optimized with the same no-reasoning setting and token limit. Preserve the
-complete usage object, full response, and finish reason for each. Do not start
-the A/B unless the no-reasoning baseline and optimized responses both pass the
-persona and five-bullet compliance gate.
+#### Controlled Gemini probe (2026-10-12)
 
-#### Manual quota check (2026-10-12)
+Immediately before the probe, the selected free-tier Gemini 2.5 Flash row in
+AI Studio showed `0 / 5` RPM, `0 / 250K` TPM, and `0 / 20` RPD (28-day view).
+Exactly three requests were sent, sequentially, with at least 15 seconds
+between calls. The local `.env` key was used without printing it. Both gateway
+instances were healthy; their effective environments differed only in
+`PROMPT_OPT_ENABLED`.
 
-AI Studio's Gemini 2.5 Flash row displayed `0 / 5` RPM, `0 / 250K` TPM, and
-`0 / 20` RPD for the selected free-tier project, with the 28-day time range
-selected. This is 20 displayed requests/day of headroom at check time. The
-page warns that usage can take up to 15 minutes to update, so recheck before
-planning an experimental run. No Gemini requests were sent during this
-resumption: the local process and `.env` contain no `GEMINI_API_KEY`, so the
-three-request probe is blocked pending credential configuration.
+The same 159-token user prompt was submitted for all three calls:
 
-The historical September dashboard showed `21 / 20` RPD and `8 / 5` RPM,
-and that run received HTTP 429; those historical values are not the current
-quota observation.
+```text
+I am preparing a quarterly sustainability review for a cloud-based language model service. Analyze the following operational scenario and produce practical recommendations for the engineering and finance teams. The service receives customer support questions, incident reports, and documentation requests from several regions. We need to understand which changes could reduce unnecessary model work without reducing answer quality or omitting important caveats. Compare response strategies, identify where repeated requests or ambiguous terminology may create avoidable work, and explain how an engineering team could validate improvements using production-like traffic. Include assumptions, risks, and measurable success criteria. Discuss how the recommendations affect latency, energy use, carbon reporting, and user satisfaction. The audience understands basic APIs and observability but may not know specialized model-serving terminology, so define abbreviations the first time you use them.
+```
+
+For the optimized arm, the gateway's optimizer added the role and concise
+five-bullet instruction (logged changes: `role-added`, `length-constrained`).
+The effective optimized user prompt was:
+
+```text
+Act as a precise domain expert. I am preparing a quarterly sustainability review for a cloud-based language model service. Analyze the following operational scenario and produce practical recommendations for the engineering and finance teams. The service receives customer support questions, incident reports, and documentation requests from several regions. We need to understand which changes could reduce unnecessary model work without reducing answer quality or omitting important caveats. Compare response strategies, identify where repeated requests or ambiguous terminology may create avoidable work, and explain how an engineering team could validate improvements using production-like traffic. Include assumptions, risks, and measurable success criteria. Discuss how the recommendations affect latency, energy use, carbon reporting, and user satisfaction. The audience understands basic APIs and observability but may not know specialized model-serving terminology, so define abbreviations the first time you use them. Keep the response concise and organized into no more than 5 bullets.
+```
+
+**Sample 1 — baseline, default thinking, `max_tokens=256`**
+
+Raw response text:
+
+```text
+Okay, this is a critical exercise for any
+```
+
+Raw usage: `{"completion_tokens":9,"prompt_tokens":155,"total_tokens":407}`
+
+`finish_reason`: `length`. The total usage minus prompt and visible completion
+is `407 - 155 - 9 = 243` tokens. Prompt plus all generated tokens is
+`155 + 9 + 243 = 407`; the generated count is 252, just below the 256 limit.
+This strongly supports the hypothesis that thinking tokens consumed most of
+the generation budget without appearing in `completion_tokens`. Google did
+not provide a separate thought-token field in this response.
+
+**Sample 2 — baseline, `reasoning_effort=none`, `max_tokens=512`**
+
+Raw response text:
+
+```text
+## Quarterly Sustainability Review: Recommendations for Cloud-based Language Model Service
+
+This document analyzes operational scenarios for our cloud-based language model service to provide practical recommendations for engineering and finance teams. The goal is to reduce unnecessary model work without sacrificing answer quality or omitting important caveats, focusing on customer support questions, incident reports, and documentation requests across various regions.
+
+### Operational Scenario Analysis: Unnecessary Model Work Drivers
+
+Our language model (LLM) service processes a high volume of requests daily. While the LLM is crucial for providing accurate and timely responses, certain patterns indicate avoidable work. These include:
+
+*   **Repeated Requests:** Users often submit the same or very similar queries multiple times due to impatience, network issues, or a lack of immediate confirmation.
+*   **Ambiguous Terminology/Lack of Specificity:** Vague or overly broad questions require the LLM to spend more computational resources trying to infer intent or explore a wider range of possible answers, which it might then discard.
+*   **Sequential Problem-Solving:** Users sometimes break down a single complex problem into multiple simpler questions, submitting them one after another, leading to redundant context processing by the LLM.
+*   **Pre-existing Answers:** Questions for which answers already exist in readily accessible static documentation (e.g., FAQs, knowledge base articles) without requiring LLM generation.
+*   **Out-of-Scope Requests:** Questions unrelated to the service's domain or requiring human intervention (e.g., account-specific issues, direct access requests).
+
+### Recommendations for Engineering and Finance Teams
+
+To address these drivers, we propose a multi-pronged approach involving strategic pre-processing, intelligent routing, and feedback mechanisms.
+
+#### Proposed Response Strategies & Engineering Interventions
+
+**1. Smart Request Pre-processing and Semantic Deduplication (Engineering Lead)**
+
+*   **Strategy:** Implement a lightweight pre-processing layer before passing requests to the main LLM. This layer would
+    *   **Normalize Text:** Convert text to lowercase, remove common stop words (e.g., "a," "an," "the"), correct minor typos, and standardize abbreviations.
+    *   **Semantic Hashing/Embedding:** Generate a compact numerical representation (embedding) of the user query. This can be done using a smaller, more efficient embedding model than the main generative LLM.
+    *   **Deduplication Cache (Cache-Aside Pattern):** Store recent queries and their generated responses in a temporary cache (e.g.,
+```
+
+Raw usage: `{"completion_tokens":512,"prompt_tokens":155,"total_tokens":667}`
+
+`finish_reason`: `length`. The response used all 512 allowed completion tokens
+and is truncated mid-sentence.
+
+**Sample 3 — optimized, `reasoning_effort=none`, `max_tokens=512`**
+
+Raw response text:
+
+```text
+Here's an analysis and recommendations for reducing unnecessary model work in your cloud-based language model (LLM) service, balancing efficiency with quality:
+
+*   **Implement a Tiered Triage and Intent Classification System:**
+    *   **Recommendation:** For your engineering team, integrate a lightweight, pre-processing layer *before* routing all requests to the primary, more resource-intensive LLM. This layer would use a small, specialized, and highly efficient **Natural Language Processing (NLP)** model or rule-based system for initial triage and intent classification (e.g., "password reset," "billing inquiry," "bug report," "documentation").
+    *   **Impact/Details:**
+        *   **Latency:** Marginally increases initial processing time (negligible for a small model), but significantly reduces overall processing time for many requests by avoiding the main LLM.
+        *   **Energy Use/Carbon Reporting:** Substantially reduces energy consumption and associated carbon emissions by offloading simpler, frequently asked questions (FAQs) or easily categorized requests from the main LLM.
+        *   **User Satisfaction:** Improves by routing specific queries to dedicated, optimized workflows (e.g., direct link to password reset, canned responses for known issues), potentially providing faster, more targeted initial responses without invoking the full model unnecessarily. High-quality answers are preserved for complex queries.
+        *   **Assumptions:** A significant portion of incoming requests are repetitive, low-complexity, or fall into predictable categories.
+        *   **Risks:** Initial misclassification could delay resolution or provide an irrelevant response for a small percentage of requests, requiring careful tuning.
+        *   **Validation (Engineering):** Use A/B testing or shadow deployment with production-like traffic. Measure the percentage of requests successfully handled by the triage layer without invoking the main LLM, and the downstream error rate. Compare the latency of classified vs. unclassified requests.
+        *   **Success Criteria:**
+            *   **Direct-to-Answer Rate:** ≥ 30% of requests handled without full LLM invocation.
+            *   **Classification Accuracy:** ≥ 95% intent classification accuracy.
+            *   **Main LLM Latency Reduction:** Average latency for main LLM invocations decreases by ≥ 10%.
+    *   **Finance Integration:** This allows for a more granular understanding of model usage costs per request type, highlighting cost savings from reducing full LLM invocations. Resource allocation can
+```
+
+Raw usage: `{"completion_tokens":512,"prompt_tokens":176,"total_tokens":688}`
+
+`finish_reason`: `length`. The optimized response also used its full 512-token
+completion limit. It did not express an expert persona and contained 14
+Markdown bullet lines (including nested bullets); the baseline 512-token
+response contained 9 bullet lines and no explicit expert-persona signal.
+Therefore the compliance gate **failed**. Do not proceed to the sequential
+A/B; these samples cannot support a claim about comparative energy, carbon, or
+answer quality.
+
+All three gateway records reported `token_count_source=provider`,
+`telemetry_source=parametric_estimated`, and `energy_source_tier=lca` (not
+`nvml` or `mock_nvml`). The observed energy and carbon values are proxy
+coefficient estimates, not Google-published figures. No A/B aggregates or
+statistical claims are reported.
+
+Raw gateway log records:
+
+```json
+{"request_id": "542019fe-5f9c-4147-9aff-8a29e381c4ce", "content_hash": "2abee62e76c0cc8d422cc680b29a7c2dcca7a1aa93371d1667e905f72488a41a", "input_tokens": 155, "prompt_optimization_arm": "baseline", "token_count_source": "provider", "original_input_tokens": 159, "optimized_input_tokens": 159, "prompt_optimization_changes": [], "output_tokens": 9, "energy_kwh": 5.28e-05, "carbon_gco2e": 0.020039145984, "moer_kg_per_kwh": 0.31, "carbon_source_tier": "static_fallback", "normalization_ms": 14.201, "proxy_ms": 2726.282, "pool_acquire_ms": 1.483, "round_trip_ms": 2722.351, "response_read_ms": 2.008, "latency_ms": 2742.48, "telemetry_source": "parametric_estimated", "energy_source_tier": "lca"}
+{"request_id": "1d89267d-b57d-46d1-84d3-b064231edac1", "content_hash": "2abee62e76c0cc8d422cc680b29a7c2dcca7a1aa93371d1667e905f72488a41a", "input_tokens": 155, "prompt_optimization_arm": "baseline", "token_count_source": "provider", "original_input_tokens": 159, "optimized_input_tokens": 159, "prompt_optimization_changes": [], "output_tokens": 512, "energy_kwh": 0.0004049, "carbon_gco2e": 0.153671405472, "moer_kg_per_kwh": 0.31, "carbon_source_tier": "static_fallback", "normalization_ms": 0.717, "proxy_ms": 3715.093, "pool_acquire_ms": 1.426, "round_trip_ms": 3711.578, "response_read_ms": 1.129, "latency_ms": 3716.838, "telemetry_source": "parametric_estimated", "energy_source_tier": "lca"}
+{"request_id": "60fc5d14-b12c-4bc8-b6f8-671bc802e581", "content_hash": "52277fb8ea91e32cf560e79d838bad0618e754ca6f4928d25855dc9a40c5ed31", "input_tokens": 176, "prompt_optimization_arm": "optimized", "token_count_source": "provider", "original_input_tokens": 159, "optimized_input_tokens": 180, "prompt_optimization_changes": ["role-added", "length-constrained"], "output_tokens": 512, "energy_kwh": 0.0004112, "carbon_gco2e": 0.156062439936, "moer_kg_per_kwh": 0.31, "carbon_source_tier": "static_fallback", "normalization_ms": 10.571, "proxy_ms": 3841.224, "pool_acquire_ms": 0.785, "round_trip_ms": 3837.514, "response_read_ms": 1.317, "latency_ms": 3853.082, "telemetry_source": "parametric_estimated", "energy_source_tier": "lca"}
+```
 
 ## Correctness and failure behavior
 
