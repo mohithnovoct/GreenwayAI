@@ -1,0 +1,362 @@
+{
+  "scoring_pass": "agent_pass1",
+  "source": "gemini_probe_round3_responses.json",
+  "rubric": "gemini_probe_round3_rubric.json",
+  "cases": [
+    {
+      "sample_number": 1,
+      "scores": {
+        "definition": {
+          "score": 1,
+          "evidence_quotes": [
+            "An **idempotency key** is a unique, client-generated string that is sent with a request to identify that specific operation."
+          ]
+        },
+        "stored_data": {
+          "score": 1,
+          "evidence_quotes": [
+            "The server stores the idempotency key along with some metadata, primarily the **outcome of the original successful request (e.g., the HTTP status code and response body)**."
+          ]
+        },
+        "retention": {
+          "score": 1,
+          "evidence_quotes": [
+            "The server stores this information for a **configurable period**, often ranging from a few hours to a few days"
+          ]
+        },
+        "retry_vs_duplicate": {
+          "score": 1,
+          "evidence_quotes": [
+            "resending the request with the same key will simply return the original success response. No new side effects are generated on the server.",
+            "Without idempotency keys, if a request that modifies state (like creating a payment) is retried, the server would treat it as a brand new request."
+          ]
+        },
+        "example": {
+          "score": 1,
+          "evidence_quotes": [
+            "**retries** the identical `POST /charges` request.",
+            "Server (without idempotency logic) receives this as a *new* request and processes it again.",
+            "Server (without idempotency logic) receives this as a *new* request and processes it again.",
+            "Server does *not* process the payment again. Instead, it immediately returns the *original* `HTTP 200 OK` response",
+            "**Result:** The customer is charged only once."
+          ]
+        }
+      }
+    },
+    {
+      "sample_number": 2,
+      "scores": {
+        "definition": {
+          "score": 1,
+          "evidence_quotes": [
+            "Idempotency keys prevent duplicate side effects from retried requests. An idempotency key is a unique token (e.g., UUID) sent by the client with the request."
+          ]
+        },
+        "stored_data": {
+          "score": 1,
+          "evidence_quotes": [
+            "The server stores this key with the request's outcome (success/failure)"
+          ]
+        },
+        "retention": {
+          "score": 1,
+          "evidence_quotes": [
+            "for a limited time (e.g., 24 hours, or until the operation is considered \"finalized\")"
+          ]
+        },
+        "retry_vs_duplicate": {
+          "score": 0,
+          "evidence_quotes": [
+            "A safe retry re-executes a request without altering system state if the first attempt already succeeded.",
+            "Without an idempotency key, retrying the `POST` would charge $100 *again*. With a key, the server sees the key, retrieves the previous successful outcome, and returns it, preventing a double charge."
+          ],
+          "rationale": "The definition says a safe retry re-executes the request, and the example does not explicitly say the keyed retry avoids re-execution."
+        },
+        "example": {
+          "score": 1,
+          "evidence_quotes": [
+            "Without an idempotency key, retrying the `POST` would charge $100 *again*.",
+            "With a key, the server sees the key, retrieves the previous successful outcome, and returns it, preventing a double charge."
+          ]
+        }
+      }
+    },
+    {
+      "sample_number": 3,
+      "scores": {
+        "definition": {
+          "score": 1,
+          "evidence_quotes": [
+            "An idempotency key is a unique, client-generated token for each *logical* request."
+          ]
+        },
+        "stored_data": {
+          "score": 1,
+          "evidence_quotes": [
+            "The server stores this key with the request's result"
+          ]
+        },
+        "retention": {
+          "score": 1,
+          "evidence_quotes": [
+            "for a limited time (e.g., 24 hours)."
+          ]
+        },
+        "retry_vs_duplicate": {
+          "score": 1,
+          "evidence_quotes": [
+            "A **safe retry** means re-sending the same request with the *same* idempotency key. The server detects the key, returns the original result, and avoids processing it again.",
+            "A **duplicated side effect** occurs without an idempotency key. The server treats each retry as a *new* request, leading to multiple executions"
+          ]
+        },
+        "example": {
+          "score": 1,
+          "evidence_quotes": [
+            "Without an idempotency key, the API charges $100 *twice*.",
+            "User retries with *same* `id-key-A1`. Server sees `id-key-A1` already processed (or processing) and returns original success/failure status, preventing duplicate charges."
+          ]
+        }
+      }
+    },
+    {
+      "sample_number": 4,
+      "scores": {
+        "definition": {
+          "score": 1,
+          "evidence_quotes": [
+            "An **idempotency key** is a unique, client-generated identifier that accompanies a request. It signals to the server that all requests bearing the same key represent the *same logical operation*."
+          ]
+        },
+        "stored_data": {
+          "score": 1,
+          "evidence_quotes": [
+            "It stores a record associating the **idempotency key** with the **outcome of that request**."
+          ]
+        },
+        "retention": {
+          "score": 1,
+          "evidence_quotes": [
+            "This stored state is generally kept for a limited duration, often 24 hours or longer"
+          ]
+        },
+        "retry_vs_duplicate": {
+          "score": 1,
+          "evidence_quotes": [
+            "If it finds a matching key and the original operation has already completed successfully, it **does not re-process the request**. Instead, it returns the *same response* that was generated during the initial successful processing.",
+            "Without idempotency, the server processes this as a *new* transfer, resulting in Account A being debited *another* \\$100"
+          ]
+        },
+        "example": {
+          "score": 1,
+          "evidence_quotes": [
+            "Without idempotency, the server processes this as a *new* transfer, resulting in Account A being debited *another* \\$100 and Account B being credited *another* \\$100.",
+            "By including an idempotency key with the original request and subsequent retries, the server can detect and prevent this duplication.",
+            "If it finds a matching key and the original operation has already completed successfully, it **does not re-process the request**."
+          ]
+        }
+      }
+    },
+    {
+      "sample_number": 5,
+      "scores": {
+        "connect_and_read_timeouts": {
+          "score": 1,
+          "evidence_quotes": [
+            "A common starting point is between **2-5 seconds**.",
+            "can range from **10 seconds to several minutes** depending on the API's nature."
+          ]
+        },
+        "transient_failures": {
+          "score": 1,
+          "evidence_quotes": [
+            "**Retry:** `500 Internal Server Error`, `502 Bad Gateway`, `503 Service Unavailable`, `504 Gateway Timeout`.",
+            "**Do NOT Retry:** `4xx` client errors"
+          ]
+        },
+        "backoff_jitter": {
+          "score": 1,
+          "evidence_quotes": [
+            "### 3. Implementing Exponential Backoff with Jitter",
+            "Add a random amount of time to the calculated backoff delay."
+          ]
+        },
+        "retry_after": {
+          "score": 1,
+          "evidence_quotes": [
+            "If an API responds with `429 Too Many Requests` or `503 Service Unavailable` and includes a `Retry-After` header, **always honor it immediately**."
+          ]
+        },
+        "attempt_bound": {
+          "score": 1,
+          "evidence_quotes": [
+            "A common range is **3-5 attempts**."
+          ]
+        },
+        "non_idempotent_safety": {
+          "score": 1,
+          "evidence_quotes": [
+            "**Non-idempotent operations:** **DO NOT RETRY** them unless you are *certain* the external API handles idempotency for them (e.g., via an idempotency key mechanism)."
+          ]
+        },
+        "monitoring_signal": {
+          "score": 1,
+          "evidence_quotes": [
+            "Also, track the count of successful vs. failed retries."
+          ]
+        }
+      }
+    },
+    {
+      "sample_number": 6,
+      "scores": {
+        "connect_and_read_timeouts": {
+          "score": 1,
+          "evidence_quotes": [
+            "**`connect_timeout`:** Short (e.g., 2-5s).",
+            "**`read_timeout`:** Longer (e.g., 10-30s)."
+          ]
+        },
+        "transient_failures": {
+          "score": 0,
+          "evidence_quotes": [
+            "**Conditions:** Only retry `httpx.ConnectError`, `httpx.TimeoutException`, and HTTP 5xx *internal* server errors"
+          ],
+          "rationale": "The response identifies transient errors to retry but does not explicitly exclude ordinary 4xx client failures."
+        },
+        "backoff_jitter": {
+          "score": 1,
+          "evidence_quotes": [
+            "**Backoff:** Implement exponential backoff (e.g., `min_delay * (factor ** attempt_num)`) plus jitter to prevent thundering herd."
+          ]
+        },
+        "retry_after": {
+          "score": 1,
+          "evidence_quotes": [
+            "Honor `Retry-After` header if present."
+          ]
+        },
+        "attempt_bound": {
+          "score": 1,
+          "evidence_quotes": [
+            "Define a maximum number of retry attempts (e.g., 3-5)."
+          ]
+        },
+        "non_idempotent_safety": {
+          "score": 1,
+          "evidence_quotes": [
+            "Do NOT retry non-idempotent operations (POST, PUT without full payload, PATCH, DELETE) unless protected by an idempotency key"
+          ]
+        },
+        "monitoring_signal": {
+          "score": 0,
+          "evidence_quotes": [
+            "\"API call latency (p99)\" for the external API"
+          ],
+          "rationale": "Latency and success rate are measurable, but neither is a retry-related signal such as retry rate or retries per request."
+        }
+      }
+    },
+    {
+      "sample_number": 7,
+      "scores": {
+        "connect_and_read_timeouts": {
+          "score": 1,
+          "evidence_quotes": [
+            "`connect_timeout`: Short (e.g., 1-3s), for establishing connection.",
+            "`read_timeout`: Longer (e.g., 5-30s), for receiving response bytes."
+          ]
+        },
+        "transient_failures": {
+          "score": 0,
+          "evidence_quotes": [
+            "**Transient Failures Only:** Retry `httpx.ConnectError`, `httpx.ReadTimeout`, `httpx.HTTPStatusError` for 5xx codes, `httpx.NetworkError`."
+          ],
+          "rationale": "The response identifies failures to retry but does not explicitly exclude ordinary 4xx client failures."
+        },
+        "backoff_jitter": {
+          "score": 1,
+          "evidence_quotes": [
+            "**Exponential Backoff with Jitter:** `wait_time = min(max_wait_time, base_delay * (2^attempt) + jitter_ms)`."
+          ]
+        },
+        "retry_after": {
+          "score": 1,
+          "evidence_quotes": [
+            "**Honor `Retry-After`:** If present, use its value over calculated backoff."
+          ]
+        },
+        "attempt_bound": {
+          "score": 1,
+          "evidence_quotes": [
+            "**Bounded Attempts:** Set a `max_retries` (e.g., 3-5)."
+          ]
+        },
+        "non_idempotent_safety": {
+          "score": 1,
+          "evidence_quotes": [
+            "**Only retry non-idempotent operations if protected by an idempotency key.**"
+          ]
+        },
+        "monitoring_signal": {
+          "score": 0,
+          "evidence_quotes": [
+            "**Monitoring:** High \"API call duration\" p99 could reveal insufficient timeouts/retries masks true API latency."
+          ],
+          "rationale": "The named latency measure is not explicitly a retry-related measure such as retry rate or retries per request."
+        }
+      }
+    },
+    {
+      "sample_number": 8,
+      "scores": {
+        "connect_and_read_timeouts": {
+          "score": 1,
+          "evidence_quotes": [
+            "**Connect Timeout (e.g., 2-5 seconds):**",
+            "**Read Timeout (e.g., 5-30 seconds):**"
+          ]
+        },
+        "transient_failures": {
+          "score": 1,
+          "evidence_quotes": [
+            "**HTTP Status Codes (Retryable):**",
+            "`4xx` errors (except `408`, `429`): Usually indicate client-side errors"
+          ]
+        },
+        "backoff_jitter": {
+          "score": 1,
+          "evidence_quotes": [
+            "**Exponential Backoff with Jitter:**",
+            "Add a random component (e.g., 20-50%) to the calculated backoff delay."
+          ]
+        },
+        "retry_after": {
+          "score": 1,
+          "evidence_quotes": [
+            "If the external API returns a `429 Too Many Requests` or `503 Service Unavailable` status code and includes a `Retry-After` header, **always honor it**."
+          ]
+        },
+        "attempt_bound": {
+          "score": 1,
+          "evidence_quotes": [
+            "**Max Retries:** Define a maximum number of retry attempts (e.g., 3-5).",
+            "**Total Timeout:** Set an overall timeout for the *entire operation*, including all retries."
+          ]
+        },
+        "non_idempotent_safety": {
+          "score": 1,
+          "evidence_quotes": [
+            "**Avoid Retries for Non-Idempotent Operations *Unless* Protected:**",
+            "If an operation is non-idempotent, **do not retry it** unless a robust idempotency mechanism is in place."
+          ]
+        },
+        "monitoring_signal": {
+          "score": 1,
+          "evidence_quotes": [
+            "If `Retry-After` isn't honored, you'll see repeated `429` or `503` errors from the same origin within short intervals."
+          ]
+        }
+      }
+    }
+  ]
+}
