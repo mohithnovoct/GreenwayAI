@@ -247,74 +247,48 @@ pending a real model.
 
 ## Real-model evidence: Gemini 2.5 Flash
 
-**Status: quota-blocked after partial real evidence.** The focused gateway test
-uses a fake response only to verify plumbing: a response usage object of
-`prompt_tokens=41` and `completion_tokens=7` produces those Greenway headers
-and energy inputs. It is not Gemini evidence.
+**Status: real-model probe pending.** A focused gateway test uses a fake
+response to verify that nonzero provider usage (`prompt_tokens=41`,
+`completion_tokens=7`) is preferred over local token estimates. It is not
+Gemini evidence.
 
-The planned live run was 41 Gemini requests: one end-to-end validation request,
-then 20 counterbalanced rounds with one baseline and one optimized request per
-round. It retains the 159-token sustainability-review prompt and six optimizer
-rules. Google’s current rate-limits page (updated 2026-09-02) says active RPM,
-input TPM, and RPD limits are project/model-specific and must be checked in AI
-Studio before running; low concurrency or sequential requests avoid RPM bursts.
-The pricing page lists Gemini 2.5 Flash input and output tokens as free. No paid
-grounding tools are used.
+#### Superseded September telemetry
 
-Once a key is available, this section must be replaced with each request's
-exact prompts, raw Gemini response, API-reported token counts, energy, carbon,
-and gateway tax, plus the aggregate optimized-minus-baseline deltas and the
-actual answer-length finding.
+The September Gemini figures `0.000102263335 kWh` and
+`0.038811930061 gCO2e` are **superseded and must not be used**. They were
+computed under the old NVML-tier accounting behavior and do not represent the
+current Gemini LCA-tier parametric coefficient estimate.
 
-### Compliance gate and quota status (2026-09-03)
+#### Truncation hypothesis and probe plan
 
-The authenticated AI Studio dashboard for project
-`gen-lang-client-0592888602` reports Gemini 2.5 Flash limits of **5 RPM**,
-**250K TPM**, and **20 RPD**. Its selected 28-day peak display currently reads
-`8/5 RPM`, `2.09K/250K TPM`, and `21/20 RPD`, and the page says the rate limit
-has been reached. The prior partial run also received HTTP 429. Therefore no
-additional requests were sent after this dashboard check.
+Earlier partial Gemini samples ended with `finish_reason=length`; their short
+visible text alone does not establish why. The previous explanation that
+Gemini's default output limit caused the short responses was unsupported:
+thinking-token consumption, output limits, and other causes were not isolated.
+Do not treat that hypothesis as confirmed until the controlled probe below
+reports raw usage details and finish reasons.
 
-The required pre-run compliance sample (full baseline and optimized responses,
-persona signal, and <=5-bullet check) could not be completed after the quota
-was exhausted. Consequently there is no defensible full A/B result, aggregate
-real energy/carbon delta, or gateway-tax estimate for the 256-token run. The
-earlier successful samples remain valid real-model observations but all ended
-with `finish_reason=length`; they show neither reliable instruction compliance
-nor a valid output-saving mechanism.
+The probe plan uses the 159-token sustainability-review prompt and requests
+these three responses in order: baseline with default thinking and
+`max_tokens=256`; baseline with `reasoning_effort="none"` and `max_tokens=512`;
+optimized with the same no-reasoning setting and token limit. Preserve the
+complete usage object, full response, and finish reason for each. Do not start
+the A/B unless the no-reasoning baseline and optimized responses both pass the
+persona and five-bullet compliance gate.
 
-The gateway was also hardened so an upstream 429 is returned rather than being
-turned into a secondary 500. Resume only after the dashboard shows available
-RPD and RPM headroom. Use the compliance gate first, then a small sequential
-run sized below the displayed quota; do not use duplicate direct Gemini calls
-for tax measurement unless the quota budget explicitly permits them.
+#### Manual quota check (2026-10-12)
 
-### Quota-limited partial run (2026-09-03)
+AI Studio's Gemini 2.5 Flash row displayed `0 / 5` RPM, `0 / 250K` TPM, and
+`0 / 20` RPD for the selected free-tier project, with the 28-day time range
+selected. This is 20 displayed requests/day of headroom at check time. The
+page warns that usage can take up to 15 minutes to update, so recheck before
+planning an experimental run. No Gemini requests were sent during this
+resumption: the local process and `.env` contain no `GEMINI_API_KEY`, so the
+three-request probe is blocked pending credential configuration.
 
-After the key was supplied, one baseline validation request returned HTTP 200
-with raw Gemini text `## Quarterly Sustainability Review: Optimizing LLM Work`,
-`prompt_tokens=155`, and `completion_tokens=10`. Its Greenway accounting was
-`0.000102263335 kWh` and `0.038811930061 gCO2e`; the response used Gemini's
-reported usage fields, not the tokenizer estimate.
-
-A subsequent counterbalanced attempt completed 9 experimental requests (5
-baseline, 4 optimized) before Gemini returned HTTP 429 on the next direct
-comparison request. Representative raw responses were:
-
-```text
-baseline, round 1: "Okay, let's analyze the operational"; input=155 output=8
-optimized, round 1: "Here's an analysis and practical recommendations"; input=176 output=8
-baseline, round 3: "This sustainability review provides practical recommendations for your cloud-"; input=155 output=10
-optimized, round 3: "Here are practical recommendations for your engineering and finance teams"; input=176 output=10
-```
-
-All successful samples ended with `finish_reason=length` under Gemini's
-default output limit, so this partial run cannot establish usefulness or a
-reliable output-length effect. The run also cannot provide a defensible gateway
-tax aggregate after the 429. The benchmark harness now sets `max_tokens=256`
-for the next run so completions can finish naturally. The 429 demonstrates that
-the active project quota, rather than the documented free pricing, controls the
-usable sample rate; check the AI Studio rate-limit page before resuming.
+The historical September dashboard showed `21 / 20` RPD and `8 / 5` RPM,
+and that run received HTTP 429; those historical values are not the current
+quota observation.
 
 ## Correctness and failure behavior
 
