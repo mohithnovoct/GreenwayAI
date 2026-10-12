@@ -432,8 +432,10 @@ calculate raw per-item agreement and the preregistered evaluation. The result
 file records the rubric preregistration commit and `git rev-parse HEAD`; the
 runner refuses to start unless the worktree is clean. Before either dry-run or
 requests, it checks that the rubric, prompts, and optimizer are byte-identical
-to the pinned commit using `git diff --quiet <pin> -- <paths>` plus direct
-byte comparison. The runner's `--dry-run` prints all eight assignments,
+to the pinned commit using `git diff --quiet <pin> -- <paths>` and verifies
+their Git blob hashes (respecting configured checkout line-ending rules). Any
+alternate rubric file must byte-match the pinned working-tree rubric. The
+runner's `--dry-run` prints all eight assignments,
 settings, expected prompt changes, and effective prompts without contacting
 Gemini.
 

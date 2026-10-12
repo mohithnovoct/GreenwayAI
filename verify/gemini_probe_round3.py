@@ -93,7 +93,6 @@ def verify_integrity(rubric_file: Path) -> dict[str, Any]:
         capture_output=True,
         text=True,
     )
-    committed_rubric = b""
     for relative_path in PINNED_INPUTS:
         diff = subprocess.run(
             ["git", "diff", "--quiet", PREREGISTRATION_COMMIT, "--", relative_path],
@@ -107,22 +106,29 @@ def verify_integrity(rubric_file: Path) -> dict[str, Any]:
             )
         if diff.returncode != 0:
             raise subprocess.CalledProcessError(diff.returncode, diff.args)
-
-        pinned_bytes = subprocess.run(
-            ["git", "show", f"{PREREGISTRATION_COMMIT}:{relative_path}"],
+        pinned_blob = subprocess.run(
+            ["git", "rev-parse", f"{PREREGISTRATION_COMMIT}:{relative_path}"],
             cwd=repository,
             check=True,
             capture_output=True,
-        ).stdout
-        working_bytes = (repository / Path(relative_path)).read_bytes()
-        if working_bytes != pinned_bytes:
+            text=True,
+        ).stdout.strip()
+        working_blob = subprocess.run(
+            ["git", "hash-object", f"--path={relative_path}", relative_path],
+            cwd=repository,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        if working_blob != pinned_blob:
             raise RuntimeError(
-                f"Refusing to run: {relative_path} is not byte-identical to "
-                f"pinned commit {PREREGISTRATION_COMMIT}"
+                f"Refusing to run: Git-cleaned bytes for {relative_path} differ "
+                f"from pinned commit {PREREGISTRATION_COMMIT}"
             )
-        if relative_path == "verify/gemini_probe_round3_rubric.json":
-            committed_rubric = pinned_bytes
 
+    committed_rubric = (
+        repository / Path("verify/gemini_probe_round3_rubric.json")
+    ).read_bytes()
     if rubric_file.read_bytes() != committed_rubric:
         raise RuntimeError(
             "Refusing to run: supplied rubric file is not byte-identical to "
