@@ -272,6 +272,10 @@ async def main(args: argparse.Namespace) -> None:
         "planned_requests": PLANNED_REQUESTS,
         "quota_reserved": 2,
         "minimum_quota_remaining": MIN_REMAINING_REQUESTS,
+        "quota_gate": (
+            "Today's usage in the AI Studio 1-day view, cross-checked against "
+            "saved attempt logs, must leave at least 10 requests (8 planned + 2 spare)."
+        ),
         "baseline_noise_measure": "word-count range between the two baseline responses for each shape",
         "coverage_rubric": args.rubric_file.name,
         "coverage_scoring_passes": ["agent_pass1", "independent_pass2"],

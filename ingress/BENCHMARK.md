@@ -388,8 +388,23 @@ The quota-gated run has **eight** requests, all with
 baseline/optimized pairs for focused explanation and two for short how-to.
 The paragraph A/A request has been dropped. For each shape, the baseline
 noise is the absolute word-count spread between its two baseline responses.
-At least **10 RPD requests** must remain on the dashboard immediately before
-launch: eight planned requests plus two reserved.
+The former 28-day dashboard reading is a peak-over-range value, not today's
+usage, so it is not used as the quota gate. Before launch, select **1 Day** in
+AI Studio and cross-check today's Pacific-date usage against the saved attempt
+logs. Proceed only when this cross-check leaves at least **10 requests**
+(eight planned requests plus two reserved). If timestamps are missing, count
+those attempts against today conservatively.
+
+Quota-gate amendment committed before collection (2026-10-12): at 03:01 PDT
+on October 12, the AI Studio **1 Day** view showed Gemini 2.5 Flash RPD
+`0 / 20`. The saved attempt logs contain seven timestamped requests on
+2026-10-11 Pacific time and one 503 planned request with no timestamp. The six
+round-two result records duplicate six entries in the retry-attempt log and
+are not additional requests. Conservatively assigning the untimestamped 503
+to October 12 gives at most one request used today and at least 19 remaining;
+the timestamped log count for October 12 is zero. No round-three requests had
+been sent at this point. This gate amendment is permissible because no
+round-three responses existed.
 
 Pre-registered decision rule: a shape counts only if all four responses finish
 with `finish_reason=stop`, both optimized prompts have non-empty change
