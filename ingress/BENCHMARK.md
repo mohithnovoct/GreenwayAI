@@ -371,8 +371,10 @@ logical operation across retries; (2) says the server stores the key associated
 with the original result/response; (3) names limited retention, a duration, or
 expiry; (4) says the same key reuses the original result without re-execution
 and contrasts this with an unprotected duplicate side effect; and (5) gives a
-concrete lost-response example where reusing the key prevents the second
-effect. The how-to has seven binary items: (1) gives a selection rule/value for
+concrete retry scenario that says the operation executes twice without an
+idempotency key and explicitly says reusing the same key prevents the second
+effect. A lost response is not required. The how-to has seven binary items:
+(1) gives a selection rule/value for
 both connect and read timeouts; (2) retries transient failures and excludes
 ordinary client failures; (3) names exponential backoff and randomized jitter;
 (4) names `Retry-After` and says to honor its value; (5) gives a finite attempt
@@ -398,14 +400,14 @@ is lower, report **"shorter but less complete"**; that is a task-scaled-cap
 finding, not a success. Plan a larger run only if both shapes count.
 
 Each response is scored twice against only the committed rubric: agent pass 1
-and an independent pass 2 in a separate session (or by a human). The two
-shuffled scoring sheets omit arm and sample identifiers, but response length
-and wording can reveal an arm; therefore scoring is **rubric-bound, not
-blind**. Both passes are saved per response in the results JSON. The scorer
-reports raw per-item agreement over the four responses for that shape/item;
-Cohen's kappa is not used. Any pass disagreement is resolved by quoting the
-response text for that item, without consulting or re-reading the arm
-assignment. Record the quoted evidence and final 0/1 resolution in the
+and an independent pass 2 outside the repository using the single saved
+response export, identified by sample number and containing no arm field.
+Response length and wording can reveal an arm; therefore scoring is
+**rubric-bound, not blind**. Both score sets are attached to the results file
+after the run. Report raw per-item agreement over the four responses for that
+shape/item; Cohen's kappa is not used. Any pass disagreement is resolved by
+quoting the response text for that item, without consulting or re-reading the
+arm assignment. Record the quoted evidence and final 0/1 resolution in the
 agent-pass-1 sheet.
 
 Predictions, recorded before the run: (a) focused explanation will pass the
@@ -417,9 +419,11 @@ pass, plan a larger run with more pairs. If either shape is not complete,
 changed, or shorter beyond baseline spread, retain the null/inconclusive
 finding and revise the experiment only as a separately preregistered version.
 
-`verify/gemini_probe_round3.py` emits two independent shuffled scoring sheets
-after collecting all responses. Agent pass 1 scores the pass-1 sheet; a
-separate session or human scores the pass-2 sheet without seeing pass 1. Run
+`verify/gemini_probe_round3.py` saves the full responses, response headers,
+results file, and a sample-number-only response export; it does not score the
+responses or generate scoring sheets during collection. Afterward, create the
+two scoring sheets from the saved results, score pass 1, and have the
+independent scorer use the sample-number-only export. Run
 `uv run python verify/gemini_probe_round3_scoring.py apply --results verify/gemini_probe_round3_results.json --pass1 verify/gemini_probe_round3_pass1.json --pass2 verify/gemini_probe_round3_pass2.json`
 to attach both score sets, require quoted resolutions for disagreements, and
 calculate raw per-item agreement and the preregistered evaluation. The result

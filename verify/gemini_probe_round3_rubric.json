@@ -18,7 +18,7 @@
     },
     {
       "id": "example",
-      "criterion": "YES only if one concrete example states an initial operation succeeded but its response was lost/not received, a retry would duplicate the effect without a key, and reusing the same key prevents the second effect; otherwise NO."
+      "criterion": "YES only if one concrete retry scenario states that the operation would execute twice without an idempotency key AND explicitly states that reusing the same key prevents the second effect; otherwise NO."
     }
   ],
   "short_how_to": [
