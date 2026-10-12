@@ -42,9 +42,7 @@ def create_blinded_sheet(
                 "prompt": sample["prompt"],
                 "criteria": rubric[shape],
                 "response_text": sample["raw_response"]["choices"][0]["message"]["content"],
-                "scores": {
-                    criterion["id"]: None for criterion in rubric[shape]
-                },
+                "scores": {criterion["id"]: None for criterion in rubric[shape]},
             }
         )
 
@@ -54,7 +52,8 @@ def create_blinded_sheet(
 
 def apply_blinded_scores(
     results: dict[str, Any],
-    sheet: dict[str, Any],
+    pass1_sheet: dict[str, Any],
+    pass2_sheet: dict[str, Any],
     rubric: dict[str, list[dict[str, str]]] | None = None,
 ) -> dict[str, Any]:
     rubric = rubric or load_json(DEFAULT_RUBRIC_FILE)
@@ -63,55 +62,136 @@ def apply_blinded_scores(
         for sample in results["samples"]
         if sample.get("coverage_blind_id")
     }
+    pass1_by_id = validate_score_sheet(results, pass1_sheet, rubric, "agent_pass1")
+    pass2_by_id = validate_score_sheet(results, pass2_sheet, rubric, "independent_pass2")
+    pass1_cases_by_id = {
+        case["blind_id"]: case for case in pass1_sheet.get("cases", [])
+    }
+    agreement: dict[str, dict[str, Any]] = {}
+    for blind_id, sample in sample_by_blind_id.items():
+        shape = sample["shape"]
+        item_results: dict[str, Any] = {}
+        final_scores: dict[str, int] = {}
+        for criterion in rubric[shape]:
+            item_id = criterion["id"]
+            first_score = pass1_by_id[blind_id][item_id]
+            second_score = pass2_by_id[blind_id][item_id]
+            item_results[item_id] = {
+                "agent_pass1": first_score,
+                "independent_pass2": second_score,
+                "agreement": first_score == second_score,
+            }
+            if first_score == second_score:
+                final_scores[item_id] = first_score
+                continue
+
+            resolution = (
+                pass1_cases_by_id[blind_id]
+                .get("disagreement_resolutions", {})
+                .get(item_id)
+            )
+            if not resolution:
+                raise ValueError(
+                    f"{blind_id}/{item_id}: disagreement needs a quoted-text resolution"
+                )
+            quote = resolution.get("evidence_quote", "")
+            final_score = resolution.get("final_score")
+            response_text = sample["raw_response"]["choices"][0]["message"]["content"]
+            if not quote or quote not in response_text:
+                raise ValueError(
+                    f"{blind_id}/{item_id}: resolution quote must occur verbatim in the response"
+                )
+            if type(final_score) is not int or final_score not in (0, 1):
+                raise ValueError(
+                    f"{blind_id}/{item_id}: resolution final_score must be 0 or 1"
+                )
+            item_results[item_id]["resolution"] = resolution
+            final_scores[item_id] = final_score
+
+        sample["coverage_scores_agent_pass1"] = pass1_by_id[blind_id]
+        sample["coverage_scores_independent_pass2"] = pass2_by_id[blind_id]
+        sample["coverage_scores_final"] = final_scores
+        sample["coverage_scores"] = final_scores
+        sample["coverage_score"] = sum(final_scores.values())
+        sample["coverage_max_score"] = len(final_scores)
+        sample["coverage_fraction"] = (
+            sum(final_scores.values()) / len(final_scores) if final_scores else None
+        )
+        sample["coverage_item_agreement"] = item_results
+
+    for shape, criteria in rubric.items():
+        shape_ids = [
+            blind_id
+            for blind_id, sample in sample_by_blind_id.items()
+            if sample["shape"] == shape
+        ]
+        if not shape_ids:
+            continue
+        agreement[shape] = {}
+        for criterion in criteria:
+            item_id = criterion["id"]
+            agreed = sum(
+                pass1_by_id[blind_id][item_id] == pass2_by_id[blind_id][item_id]
+                for blind_id in shape_ids
+            )
+            agreement[shape][item_id] = {
+                "agreements": agreed,
+                "responses_scored": len(shape_ids),
+                "raw_percent_agreement": round(100 * agreed / len(shape_ids), 1),
+            }
+    results["coverage_inter_rater_agreement"] = agreement
+    return results
+
+
+def validate_score_sheet(
+    results: dict[str, Any],
+    sheet: dict[str, Any],
+    rubric: dict[str, list[dict[str, str]]],
+    pass_name: str,
+) -> dict[str, dict[str, int]]:
+    sample_by_blind_id = {
+        sample["coverage_blind_id"]: sample
+        for sample in results["samples"]
+        if sample.get("coverage_blind_id")
+    }
     cases = sheet.get("cases", [])
     if len(cases) != len(sample_by_blind_id):
-        raise ValueError("Scored sheet must contain every blinded response exactly once")
-
-    seen: set[str] = set()
+        raise ValueError(f"{pass_name}: sheet must contain every response exactly once")
+    scores_by_id: dict[str, dict[str, int]] = {}
     for case in cases:
         blind_id = case.get("blind_id")
-        if blind_id not in sample_by_blind_id or blind_id in seen:
-            raise ValueError(f"Unknown or duplicate blind ID: {blind_id!r}")
-        seen.add(blind_id)
-        shape = sample_by_blind_id[blind_id]["shape"]
-        criteria = case.get("criteria", [])
-        expected_ids = {criterion["id"] for criterion in rubric[shape]}
+        if blind_id not in sample_by_blind_id or blind_id in scores_by_id:
+            raise ValueError(f"{pass_name}: unknown or duplicate blind ID {blind_id!r}")
+        sample = sample_by_blind_id[blind_id]
+        shape = sample["shape"]
+        expected_criteria = rubric[shape]
+        expected_ids = {criterion["id"] for criterion in expected_criteria}
+        if {criterion["id"] for criterion in case.get("criteria", [])} != expected_ids:
+            raise ValueError(f"{pass_name}/{blind_id}: criteria do not match the preregistered rubric")
+        if case.get("response_text") != sample["raw_response"]["choices"][0]["message"]["content"]:
+            raise ValueError(f"{pass_name}/{blind_id}: response text does not match saved response")
         scores = case.get("scores", {})
         if set(scores) != expected_ids or any(
             type(value) is not int or value not in (0, 1)
             for value in scores.values()
         ):
-            raise ValueError(
-                f"{blind_id}: score each rubric item exactly 0 or 1"
-            )
-        if {criterion["id"] for criterion in criteria} != expected_ids:
-            raise ValueError(f"{blind_id}: rubric criteria do not match the preregistration")
-        sample = sample_by_blind_id[blind_id]
-        sample["coverage_scores"] = scores
-        sample["coverage_score"] = sum(scores.values())
-        sample["coverage_max_score"] = len(expected_ids)
-        sample["coverage_fraction"] = (
-            sum(scores.values()) / len(expected_ids) if expected_ids else None
-        )
-    return results
+            raise ValueError(f"{pass_name}/{blind_id}: score each item exactly 0 or 1")
+        scores_by_id[blind_id] = scores
+    return scores_by_id
 
 
-def score_sheet(results_path: Path, sheet_path: Path) -> None:
+def apply_scores(
+    results_path: Path,
+    pass1_path: Path,
+    pass2_path: Path,
+) -> None:
     results = load_json(results_path)
-    rubric = load_json(DEFAULT_RUBRIC_FILE)
-    sheet, assignments = create_blinded_sheet(results, rubric)
-    for sample in results["samples"]:
-        if str(sample["sample_number"]) in assignments:
-            sample["coverage_blind_id"] = assignments[str(sample["sample_number"])]
-    save_json(results_path, results)
-    save_json(sheet_path, sheet)
-
-
-def apply_scores(results_path: Path, sheet_path: Path) -> None:
-    results = load_json(results_path)
+    pass1_sheet = load_json(pass1_path)
+    pass2_sheet = load_json(pass2_path)
     scored = apply_blinded_scores(
         results,
-        load_json(sheet_path),
+        pass1_sheet,
+        pass2_sheet,
         load_json(DEFAULT_RUBRIC_FILE),
     )
     from verify.gemini_probe_round3 import evaluate_results
@@ -123,17 +203,12 @@ def apply_scores(results_path: Path, sheet_path: Path) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(dest="command", required=True)
-    blind_parser = subparsers.add_parser("blind")
-    blind_parser.add_argument("--results", type=Path, required=True)
-    blind_parser.add_argument("--sheet", type=Path, required=True)
     apply_parser = subparsers.add_parser("apply")
     apply_parser.add_argument("--results", type=Path, required=True)
-    apply_parser.add_argument("--sheet", type=Path, required=True)
+    apply_parser.add_argument("--pass1", type=Path, required=True)
+    apply_parser.add_argument("--pass2", type=Path, required=True)
     args = parser.parse_args()
-    if args.command == "blind":
-        score_sheet(args.results, args.sheet)
-    else:
-        apply_scores(args.results, args.sheet)
+    apply_scores(args.results, args.pass1, args.pass2)
 
 
 if __name__ == "__main__":

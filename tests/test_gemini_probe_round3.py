@@ -135,16 +135,31 @@ def test_coverage_sheet_blinds_arm_and_applies_scores():
     sheet, assignments = create_blinded_sheet(results, rubric)
     assert len(sheet["cases"]) == 2
     assert all("arm" not in case and "sample_number" not in case for case in sheet["cases"])
-    for case in sheet["cases"]:
-        value = int(case["response_text"] == "Response A")
-        case["scores"] = {"definition": value, "example": value}
+    pass1_sheet = copy.deepcopy(sheet)
+    pass2_sheet = copy.deepcopy(sheet)
+    for case in pass1_sheet["cases"]:
+        case["scores"] = {"definition": 1, "example": 0}
+        case["disagreement_resolutions"] = {
+            "example": {"evidence_quote": "Response", "final_score": 0}
+        }
+    for case in pass2_sheet["cases"]:
+        case["scores"] = {"definition": 1, "example": 1}
 
     scored_results = copy.deepcopy(results)
     for sample in scored_results["samples"]:
         sample["coverage_blind_id"] = assignments[str(sample["sample_number"])]
-    apply_blinded_scores(scored_results, sheet, rubric)
+    apply_blinded_scores(scored_results, pass1_sheet, pass2_sheet, rubric)
 
-    assert [
-        sample["coverage_score"] for sample in scored_results["samples"]
-    ] == [2, 0]
+    assert all(sample["coverage_score"] == 1 for sample in scored_results["samples"])
     assert all(sample["coverage_max_score"] == 2 for sample in scored_results["samples"])
+    assert all(
+        sample["coverage_scores_agent_pass1"] == {"definition": 1, "example": 0}
+        for sample in scored_results["samples"]
+    )
+    assert all(
+        sample["coverage_scores_independent_pass2"] == {"definition": 1, "example": 1}
+        for sample in scored_results["samples"]
+    )
+    agreement = scored_results["coverage_inter_rater_agreement"]["focused_explanation"]
+    assert agreement["definition"]["raw_percent_agreement"] == 100.0
+    assert agreement["example"]["raw_percent_agreement"] == 0.0

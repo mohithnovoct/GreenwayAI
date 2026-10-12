@@ -2,6 +2,7 @@
 
 import argparse
 import asyncio
+import copy
 import json
 import os
 from pathlib import Path
@@ -24,13 +25,15 @@ from verify.gemini_probe_round3_scoring import (
     create_blinded_sheet,
 )
 
+PREREGISTRATION_COMMIT = "f2a0db3a03ce0799c9f0cb85d7e46743197bfe4"
 MAX_TOKENS = 2048
 PAIRS_PER_SHAPE = 2
 PLANNED_REQUESTS = 8
 MIN_REMAINING_REQUESTS = 10
 DEFAULT_RESULTS_FILE = Path(__file__).with_name("gemini_probe_round3_results.json")
 DEFAULT_ATTEMPTS_FILE = Path(__file__).with_name("gemini_probe_round3_attempts.json")
-DEFAULT_SCORING_FILE = Path(__file__).with_name("gemini_probe_round3_blinded_scores.json")
+DEFAULT_PASS1_FILE = Path(__file__).with_name("gemini_probe_round3_pass1.json")
+DEFAULT_PASS2_FILE = Path(__file__).with_name("gemini_probe_round3_pass2.json")
 
 
 def build_schedule(prompts: list[dict[str, str]]) -> list[dict[str, Any]]:
@@ -79,7 +82,18 @@ def git_snapshot() -> dict[str, Any]:
         capture_output=True,
         text=True,
     ).stdout
-    return {"git_rev_parse_head": commit, "git_dirty_tree": bool(status.strip())}
+    subprocess.run(
+        ["git", "merge-base", "--is-ancestor", PREREGISTRATION_COMMIT, "HEAD"],
+        cwd=repository,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return {
+        "git_rev_parse_head": commit,
+        "git_dirty_tree": bool(status.strip()),
+        "rubric_preregistration_commit": PREREGISTRATION_COMMIT,
+    }
 
 
 def evaluate_results(samples: list[dict[str, Any]]) -> dict[str, Any]:
@@ -203,6 +217,8 @@ async def main(args: argparse.Namespace) -> None:
         "minimum_quota_remaining": MIN_REMAINING_REQUESTS,
         "baseline_noise_measure": "word-count range between the two baseline responses for each shape",
         "coverage_rubric": DEFAULT_RUBRIC_FILE.name,
+        "coverage_scoring_passes": ["agent_pass1", "independent_pass2"],
+        "agreement_measure": "raw percent agreement per rubric item across four responses per shape",
         "decision_rule": (
             "A shape counts only if all four responses finish with stop, both optimized "
             "prompts have non-empty change records, mean optimized words are below mean "
@@ -392,7 +408,8 @@ async def main(args: argparse.Namespace) -> None:
     score_sheet, assignments = create_blinded_sheet({"samples": results}, rubric)
     for sample in results:
         sample["coverage_blind_id"] = assignments[str(sample["sample_number"])]
-    persist_json(args.scoring_output, score_sheet)
+    persist_json(args.pass1_output, copy.deepcopy(score_sheet))
+    persist_json(args.pass2_output, copy.deepcopy(score_sheet))
     persist_json(
         args.output,
         {
@@ -400,7 +417,10 @@ async def main(args: argparse.Namespace) -> None:
             "protocol": protocol,
             "samples": results,
             "attempts": attempts,
-            "scoring_sheet": args.scoring_output.name,
+            "scoring_sheets": {
+                "agent_pass1": args.pass1_output.name,
+                "independent_pass2": args.pass2_output.name,
+            },
             "evaluation": None,
         },
     )
@@ -408,10 +428,11 @@ async def main(args: argparse.Namespace) -> None:
         json.dumps(
             {
                 "results": str(args.output),
-                "blinded_scoring_sheet": str(args.scoring_output),
+                "agent_pass1_sheet": str(args.pass1_output),
+                "independent_pass2_sheet": str(args.pass2_output),
                 "next_step": (
-                    "Score the shuffled cases in the blinded sheet, then apply "
-                    "scores before running the preregistered evaluation."
+                    "Score both shuffled sheets independently, record any "
+                    "disagreement quote in pass 1, then apply both score sets."
                 ),
             },
             ensure_ascii=False,
@@ -426,7 +447,8 @@ if __name__ == "__main__":
     parser.add_argument("--optimized-gateway", default="http://127.0.0.1:8002/v1/chat/completions")
     parser.add_argument("--output", type=Path, default=DEFAULT_RESULTS_FILE)
     parser.add_argument("--attempts-output", type=Path, default=DEFAULT_ATTEMPTS_FILE)
-    parser.add_argument("--scoring-output", type=Path, default=DEFAULT_SCORING_FILE)
+    parser.add_argument("--pass1-output", type=Path, default=DEFAULT_PASS1_FILE)
+    parser.add_argument("--pass2-output", type=Path, default=DEFAULT_PASS2_FILE)
     parser.add_argument("--quota-remaining", type=int)
     parser.add_argument("--word-cap", type=int, default=150)
     parser.add_argument("--dry-run", action="store_true")
