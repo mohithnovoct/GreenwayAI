@@ -245,9 +245,9 @@ pending a real model.
 
 ## Real-model evidence: Gemini 2.5 Flash
 
-**Status: round 1 analyzed; round 2 aborted before a matched sample.** Round-1
-evidence and its current interpretation are recorded below. Round-2 prompt
-shapes and protocol are saved, but the request attempt hit an upstream error.
+**Status: round 1 analyzed; round 2 completed, no larger run triggered.**
+Round-1 evidence, round-2 protocol, and all six round-2 responses are recorded
+below.
 
 #### Round-2 pre-registered protocol
 
@@ -274,27 +274,80 @@ runner is [`verify/gemini_probe_round2.py`](../verify/gemini_probe_round2.py);
 it writes complete raw responses and per-sample metrics to
 `verify/gemini_probe_round2_results.json`.
 
-The first baseline request received HTTP 503 from the Gemini endpoint. The
-runner stopped immediately without retrying. A subsequent one-token diagnostic
-request returned `{"completion_tokens":1,"prompt_tokens":4,"total_tokens":5}`,
-with response text `This` and `finish_reason=length`; this diagnostic is not a
-round-2 sample. AI Studio then showed `5 / 20` RPD, up from `3 / 20` before the
-attempts. Two request slots were consumed (the upstream 503 and the diagnostic
-success); the round stopped rather than continuing with fewer than the six
-requests needed for all three matched shapes. No round-2 comparison was
-completed, and the preregistered decision rule is unevaluated.
+#### Round-2 quota and attempt record (2026-10-12)
 
-The recorded diagnostic response is retained in
-[`verify/gemini_probe_round2_attempts.json`](../verify/gemini_probe_round2_attempts.json).
+Immediately before round 2, AI Studio displayed Gemini 2.5 Flash at `5 / 20`
+RPD, i.e. 15 remaining. The runner's attempt budget was 13, preserving the
+two-request reserve. All six planned requests succeeded on their first
+attempt; no retry was needed. Their starts were sequential and more than 15
+seconds apart (intervals approximately 22.5, 22.3, 21.2, 22.3, and 18.7
+seconds). After the run, a refreshed dashboard displayed `11 / 20` RPD
+(9 remaining); the dashboard therefore reflected all six additional
+successful calls. Full response bodies and provider usage are saved in
+[`verify/gemini_probe_round2_results.json`](../verify/gemini_probe_round2_results.json);
+per-attempt status/body records are in
+[`verify/gemini_probe_round2_retry_attempts.json`](../verify/gemini_probe_round2_retry_attempts.json).
+
+All six samples report `reasoning_effort=none`, `max_tokens=1024`,
+`token_count_source=provider`, `telemetry_source=parametric_estimated`,
+`energy_source_tier=lca`, and zero hidden tokens:
+
+| Sample | Shape | Arm | Usage (prompt/completion/total) | Finish | Hidden | Words | Top bullets | All bullet lines | Headings | Text count | Energy kWh | Carbon gCO2e |
+|---|---|---|---|---|---:|---:|---:|---:|---:|---|---:|---:|
+| 1 | Focused explanation | Baseline | 92 / 1024 / 1116 | length | 0 | 639 | 19 | 19 | 4 | lower bound | 0.0007444 | 0.282521596032 |
+| 2 | Focused explanation | Optimized | 110 / 1024 / 1134 | length | 0 | 665 | 2 | 8 | 3 | lower bound | 0.0007498 | 0.284571054144 |
+| 3 | Short how-to | Optimized | 116 / 768 / 884 | stop | 0 | 429 | 5 | 18 | 0 | complete | 0.0005724 | 0.217242559872 |
+| 4 | Short how-to | Baseline | 95 / 1024 / 1119 | length | 0 | 575 | 13 | 28 | 6 | lower bound | 0.0007453 | 0.282863172384 |
+| 5 | One-paragraph analysis | Baseline | 86 / 220 / 306 | stop | 0 | 182 | 0 | 0 | 0 | complete | 0.0001798 | 0.068239364544 |
+| 6 | One-paragraph analysis | Optimized | 86 / 209 / 295 | stop | 0 | 172 | 0 | 0 | 0 | complete | 0.0001721 | 0.065316989088 |
+
+Across the three samples per arm, mean provider completion tokens were 756
+(baseline) and 667 (optimized); mean words were 465.3 and 422.0. Mean proxy
+energy was `0.0005565` vs. `0.0004981 kWh` (optimized minus baseline:
+`-0.0000584 kWh`), and mean proxy carbon was `0.211208044320` vs.
+`0.189043534368 gCO2e` (delta `-0.022164509952 gCO2e`). These aggregate
+figures include truncated responses and are not a valid causal savings
+estimate.
+
+For samples 1, 2, and 4, all content counts are lower bounds because the
+responses reached the token cap. Per the preregistered rule, a comparison
+counts as shorter only when both arms have `finish_reason=stop`. Thus:
+
+- Focused explanation: neither response is complete; the optimized answer is
+  longer by 26 words, and neither is a valid shorter-output comparison.
+- Short how-to: optimized is complete at 429 words, but baseline is truncated;
+  it is not counted as a shorter-output comparison.
+- One-paragraph analysis: both are complete and optimized is 10 words shorter
+  (172 vs. 182), so this is the only shape satisfying the text-completeness
+  and shorter-output portion of the rule. However, the effective prompt did
+  not change in the optimized arm (`effective_prompt` equaled `prompt`), so
+  the difference is not attributable to a v1 instruction change.
+
+The effective focused-explanation prompt gained a persona instruction and an
+unintended "provide all requested variations" instruction; the latter was
+triggered by "one brief example." The optimized how-to prompt gained persona
+and length-constrained instructions. The optimized one-paragraph prompt had
+no changes, which is why its ten-word difference cannot be attributed to the
+optimizer.
+
+The decision threshold was at least two of three shapes; it was met by only
+one, and that shape had no optimizer prompt transformation. **No larger run is
+planned from this result.** The outputs are also not especially concise against
+the reviewed expectations (roughly 70-110 words for shapes 1 and 3, and under
+140 words for shape 2): the only complete optimized how-to was 429 words.
+
+All energy/carbon numbers above are proxy-coefficient estimates, not
+Google-published measurements. The Gemini row is a placeholder shared with
+`lca-demo`; observed energy deltas are not evidence of a causal energy saving.
 
 #### Proposed optimizer v2 (not implemented)
 
-Round 1 does not establish that v1 generally fails; its single broad prompt
-asked for exhaustive coverage while also receiving a brevity instruction. As a
-separate experiment, v2 could add a task-scoped, quantified cap such as
-"under 120 words" for a short explanation/how-to, while leaving broad analyses
-uncapped or caller-configurable. Do not replace v1 or claim improvement until
-the full three-shape comparison can be completed and outputs are complete.
+Preserve v1. As a separately labeled experiment, v2 could add a task-scoped,
+quantified instruction such as "under 120 words" for short explanations and
+how-tos, while leaving broad analyses uncapped or caller-configurable. This is
+an instruction in the prompt, not a `max_tokens` setting. Make no savings
+claim unless both arms end with `finish_reason=stop`; a max-token-truncated
+response does not count as shorter.
 
 #### Superseded September telemetry
 

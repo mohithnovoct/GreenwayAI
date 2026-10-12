@@ -2,7 +2,7 @@
 
 | Phase | Claim | Current evidence | Status |
 |---|---|---|---|
-| 3 | Green prompt engineering reduces energy/carbon through shorter, equally useful real-model outputs. | Round 1 used one sample per arm on a broad prompt demanding exhaustive coverage. Both baseline and optimized outputs reached the 512-token cap (`finish_reason=length`). The gateway log confirms the optimized prompt included the persona rule (`role-added`). Result: the length instruction did not shorten output on this prompt at this cap; this is not evidence that the model generally ignores the optimizer. Round 2 was aborted after an upstream 503 and a one-token diagnostic response; no matched samples were collected and its decision rule is unevaluated. A separately labeled v2 proposal is recorded in BENCHMARK.md. September estimates `0.000102263335 kWh` and `0.038811930061 gCO2e` remain superseded; the Gemini coefficient row is a placeholder identical to `lca-demo`. | Round 1 inconclusive; round 2 aborted |
+| 3 | Green prompt engineering reduces energy/carbon through shorter, equally useful real-model outputs. | Round 1 used n=1 per arm on a broad exhaustive prompt; both hit the 512-token cap. Round 2 completed all three counterbalanced prompt shapes at n=1 per arm. Only the one-paragraph shape had both arms complete and optimized text shorter (172 vs. 182 words), but the effective prompts were identical there. One qualifying shape is below the 2-of-3 threshold; no larger run is planned. Energy uses a placeholder coefficient identical to lca-demo, so no causal energy claim follows. September estimates remain superseded. | Directional round 2; no optimizer effect established |
 
 ## Phase 3 validation state
 
@@ -17,10 +17,12 @@ Round 1 had n=1 per arm; both outputs were truncated at 512 on a prompt that
 asks for extensive coverage while the optimizer asks for brevity. The
 length instruction did not shorten output on this prompt at this cap; the
 result is inconclusive rather than evidence that the model ignores the
-optimizer. Round 2's saved three-shape test was not completed: an upstream
-503 halted the runner, and the available request budget was preserved rather
-than continuing with an incomplete set. A task-scoped quantified word cap is
-proposed as a separately labeled optimizer v2 experiment, not implemented.
+optimizer. Round 2 completed n=1 per arm across three prompt shapes. Only one
+shape produced shorter optimized text with both responses complete; in that
+shape the effective optimized prompt was unchanged. This misses the
+pre-registered 2-of-3 threshold and establishes no optimizer effect. A
+task-scoped quantified word cap is proposed as a separately labeled optimizer
+v2 experiment, not implemented.
 
 The local vLLM service is disabled because the container has no GPU. Phase 3
 should not close on mock-backend evidence alone. Gemini connectivity and
