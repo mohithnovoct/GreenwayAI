@@ -28,10 +28,18 @@ Copy `.env.example` to `.env`, then start the foundation services:
 docker compose up
 ```
 
-The gateway stub is available at `http://localhost:8000`, with API docs at
-`http://localhost:8000/docs`. Redis and the OpenTelemetry collector are
-included as integration placeholders. The vLLM service remains commented out
-until GPU-backed serving is introduced.
+The gateway is available at `http://localhost:8000`, with API docs at
+`http://localhost:8000/docs`. A second gateway instance for A/B runs is
+available at `http://localhost:8002`; port 8001 is reserved for the mock
+backend. Redis and the OpenTelemetry collector are included as integration
+placeholders. The vLLM service remains commented out until GPU-backed serving
+is introduced.
+The two gateway instances share their application environment except for
+`PROMPT_OPT_ENABLED` (`false` at port 8000, `true` at port 8002).
+
+`uv run python verify/gemini_ab.py` sends both prompt arms through the gateway
+instances on ports 8000 and 8002. Its `gateway_tax_ms` is an estimate based on
+client-observed gateway latency minus the gateway-reported upstream round trip.
 
 ### Gemini backend
 

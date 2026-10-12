@@ -82,8 +82,11 @@ def percentile(values: list[float], fraction: float) -> float:
     return sorted(values)[min(int(len(values) * fraction), len(values) - 1)]
 
 
-def resource_state() -> tuple[float, float | None]:
-    load_average = os.getloadavg()[0]
+def resource_state() -> tuple[float | None, float | None]:
+    try:
+        load_average = os.getloadavg()[0]
+    except (AttributeError, OSError):
+        load_average = None
     available_memory_mib = None
     try:
         with open("/proc/meminfo", encoding="utf-8") as meminfo:
@@ -97,8 +100,9 @@ def resource_state() -> tuple[float, float | None]:
 
 def print_resource_state(label: str) -> None:
     load_average, available_memory_mib = resource_state()
+    load = f"{load_average:.2f}" if load_average is not None else "unavailable"
     memory = f"{available_memory_mib:.1f} MiB" if available_memory_mib is not None else "unknown"
-    print(f"resource {label}: load_avg_1m={load_average:.2f} available_memory={memory}")
+    print(f"resource {label}: load_avg_1m={load} available_memory={memory}")
 
 
 async def main(args: argparse.Namespace) -> None:

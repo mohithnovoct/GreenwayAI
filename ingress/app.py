@@ -158,12 +158,14 @@ async def chat_completions(
     carbon_gco2e: float | None = None
     moer_kg_per_kwh: float | None = None
     carbon_source_tier = "unavailable"
-    hardware_energy_kwh: float | None = 0.0
-    energy_source_tier: str | None = None
+    hardware_energy_kwh: float | None = None
+    energy_source_tier = "unavailable"
     response_payload: dict[str, Any] = {}
     sampler = getattr(request.app.state, "nvml_sampler", None)
     parametric_estimator = getattr(request.app.state, "parametric_estimator", None)
-    parametric_mode = remote_backend or os.getenv("GREENWAY_ENERGY_MODE", "nvml").strip().lower() == "parametric"
+    parametric_mode = bool(backend_url) and (
+        remote_backend or os.getenv("GREENWAY_ENERGY_MODE", "nvml").strip().lower() == "parametric"
+    )
     telemetry_source = "unknown"
     if parametric_mode:
         telemetry_source = "parametric_estimated"
@@ -215,6 +217,7 @@ async def chat_completions(
                         end_ts=request_energy_window_end(trace_started, pool_acquire_ms, round_trip_ms),
                     )
                     hardware_energy_kwh = sampler.estimate_request_energy_kwh(gateway_request.request_id)
+                    energy_source_tier = "nvml"
                 except Exception as error:
                     logger.warning("NVML request energy estimation failed: %s", error)
                     hardware_energy_kwh = None
@@ -243,7 +246,10 @@ async def chat_completions(
         completion_tokens = usage.get("completion_tokens")
         if not isinstance(prompt_tokens, int) or not isinstance(completion_tokens, int):
             return None, None
-        return prompt_tokens, completion_tokens
+        return (
+            prompt_tokens if prompt_tokens > 0 else None,
+            completion_tokens if completion_tokens > 0 else None,
+        )
 
     def _count_response_tokens(payload: dict[str, Any]) -> int:
         choices = payload.get("choices", [])
@@ -265,12 +271,21 @@ async def chat_completions(
 
     if response_payload:
         reported_input_tokens, reported_output_tokens = _reported_usage(response_payload)
+        estimated_input_tokens = gateway_request.input_tokens or 0
+        estimated_output_tokens = await asyncio.to_thread(_count_response_tokens, response_payload)
         output_tokens = (
             reported_output_tokens
             if reported_output_tokens is not None
-            else await asyncio.to_thread(_count_response_tokens, response_payload)
+            else estimated_output_tokens
         )
-        input_tokens = reported_input_tokens if reported_input_tokens is not None else gateway_request.input_tokens or 0
+        input_tokens = reported_input_tokens if reported_input_tokens is not None else estimated_input_tokens
+        token_count_source = (
+            "provider"
+            if reported_input_tokens is not None and reported_output_tokens is not None
+            else "tiktoken_estimated"
+            if reported_input_tokens is None and reported_output_tokens is None
+            else "mixed"
+        )
         if parametric_mode and parametric_estimator is not None:
             estimate = parametric_estimator.estimate(
                 model=str(gateway_request.raw_payload.get("model", "unknown")),
@@ -295,17 +310,18 @@ async def chat_completions(
                 energy_kwh=energy_kwh,
                 moer_kg_per_kwh=moer_kg_per_kwh,
             )
-        else:
+        elif moer_kg_per_kwh is None:
             carbon_source_tier = "unavailable"
         proxy_ms = (time.perf_counter() - proxy_started) * 1000
         response.headers["X-Greenway-Input-Tokens"] = str(input_tokens)
         response.headers["X-Greenway-Output-Tokens"] = str(output_tokens)
+        response.headers["X-Greenway-Token-Source"] = token_count_source
         response.headers["X-Greenway-Energy-kWh"] = str(round(energy_kwh, 12)) if energy_kwh is not None else "null"
         response.headers["X-Greenway-Carbon-gCO2e"] = str(round(carbon_gco2e, 12)) if carbon_gco2e is not None else "null"
         response.headers["X-Greenway-MOER-kgPerKWh"] = str(round(moer_kg_per_kwh, 12)) if moer_kg_per_kwh is not None else "null"
         response.headers["X-Greenway-Carbon-Source"] = carbon_source_tier
         response.headers["X-Greenway-Telemetry-Source"] = telemetry_source
-        response.headers["X-Greenway-Energy-Source"] = energy_source_tier or "nvml"
+        response.headers["X-Greenway-Energy-Source"] = energy_source_tier
         response.headers["X-Greenway-Normalization-ms"] = str(round(normalization_ms, 3))
         response.headers["X-Greenway-Proxy-ms"] = str(round(proxy_ms, 3))
         response.headers["X-Greenway-Pool-Acquire-ms"] = str(round(pool_acquire_ms, 3))
@@ -317,6 +333,7 @@ async def chat_completions(
             "content_hash": gateway_request.content_hash,
             "input_tokens": input_tokens,
             "prompt_optimization_arm": optimization_arm,
+            "token_count_source": token_count_source,
             **({
                 "original_prompt": original_prompt,
                 "optimized_prompt": optimized_prompt,
@@ -336,23 +353,23 @@ async def chat_completions(
             "response_read_ms": round(response_read_ms, 3),
             "latency_ms": round((time.perf_counter() - started) * 1000, 3),
             "telemetry_source": telemetry_source,
-            "energy_source_tier": energy_source_tier or "nvml",
+            "energy_source_tier": energy_source_tier,
         }))
         record_request_metrics(
             request.app.state.metrics,
             energy_kwh=energy_kwh,
             carbon_gco2e=carbon_gco2e,
             telemetry_source=telemetry_source,
-            energy_source_tier=energy_source_tier or "nvml",
+            energy_source_tier=energy_source_tier,
             carbon_source_tier=carbon_source_tier,
         )
         request.app.state.dashboard_points.append({
             "request_id": gateway_request.request_id,
             "carbon_gco2e": carbon_gco2e,
             "telemetry_source": telemetry_source,
-            "energy_source_tier": energy_source_tier or "nvml",
+            "energy_source_tier": energy_source_tier,
             "carbon_source_tier": carbon_source_tier,
-            "color": "#cc3333" if carbon_source_tier == "unavailable" else "#26734d",
+            "color": "#cc3333" if carbon_gco2e is None else "#26734d",
         })
         del request.app.state.dashboard_points[:-100]
     else:

@@ -35,6 +35,18 @@ provider's `usage.prompt_tokens` and `usage.completion_tokens` over the local
 Studio](https://aistudio.google.com/apikey) and placed only in the ignored
 `.env` file.
 
+If usage is absent or both provider token counts are zero (as with the mock
+backend), the gateway estimates input and output tokens with `tiktoken`.
+`X-Greenway-Token-Source` and the structured log's `token_count_source`
+identify these counts as `tiktoken_estimated`; nonzero provider usage remains
+tagged `provider`. In-process mock responses report null energy and carbon
+with energy tier `unavailable`, rather than attributing mock sampler power to
+the request.
+
+Compose provides two A/B gateway instances with matching application settings
+except for `PROMPT_OPT_ENABLED`: baseline is disabled at port 8000, optimized
+is enabled at port 8002, and port 8001 remains the mock backend.
+
 The current mock backend normally echoes the final input message, so its output
 is not a generated answer. Its response length therefore follows the echoed
 input text, but it has no quality-dependent generation or re-prompt behavior.

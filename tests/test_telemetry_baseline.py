@@ -203,6 +203,48 @@ def test_nvml_energy_is_hardware_only(monkeypatch):
     assert response.headers["X-Greenway-Energy-Source"] == "nvml"
 
 
+@pytest.mark.parametrize("energy_mode", ["nvml", "parametric"])
+def test_mock_backend_reports_energy_as_unavailable(monkeypatch, caplog, energy_mode):
+    monkeypatch.setenv("GREENWAY_BACKEND_MODE", "mock")
+    monkeypatch.setenv("VLLM_BACKEND_URL", "")
+    monkeypatch.setenv("GREENWAY_ENERGY_MODE", energy_mode)
+    monkeypatch.setenv("GREENWAY_CARBON_DISABLED", "true")
+    caplog.set_level(logging.INFO, logger="greenwayai.ingress")
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            json={"model": "mock", "messages": [{"role": "user", "content": "mock request"}]},
+        )
+        dashboard_response = client.get("/dashboard-data")
+
+    assert response.status_code == 200
+    assert response.headers["X-Greenway-Energy-kWh"] == "null"
+    assert response.headers["X-Greenway-Carbon-gCO2e"] == "null"
+    assert response.headers["X-Greenway-Telemetry-Source"] == "mock_nvml"
+    assert response.headers["X-Greenway-Energy-Source"] == "unavailable"
+    assert response.headers["X-Greenway-Token-Source"] == "tiktoken_estimated"
+    assert int(response.headers["X-Greenway-Input-Tokens"]) > 0
+    assert int(response.headers["X-Greenway-Output-Tokens"]) > 0
+    assert response.headers["X-Greenway-Carbon-Source"] == "static_fallback"
+    records = [
+        json.loads(record.message)
+        for record in caplog.records
+        if '"prompt_optimization_arm"' in record.message
+    ]
+    assert records[-1]["energy_kwh"] is None
+    assert records[-1]["energy_source_tier"] == "unavailable"
+    assert records[-1]["input_tokens"] > 0
+    assert records[-1]["output_tokens"] > 0
+    assert records[-1]["token_count_source"] == "tiktoken_estimated"
+    assert records[-1]["carbon_gco2e"] is None
+    assert records[-1]["carbon_source_tier"] == "static_fallback"
+
+    assert dashboard_response.status_code == 200
+    assert dashboard_response.json()[-1]["carbon_gco2e"] is None
+    assert dashboard_response.json()[-1]["carbon_source_tier"] == "static_fallback"
+
+
 def test_remote_backend_forces_parametric_energy(monkeypatch):
     monkeypatch.setenv("GREENWAY_BACKEND_MODE", "gemini")
     monkeypatch.setenv("GEMINI_API_KEY", "test-gemini-key")
@@ -258,6 +300,7 @@ def test_gemini_backend_uses_api_usage_and_bearer_auth(monkeypatch):
     assert captured["body"]["model"] == "gemini-2.5-flash"
     assert response.headers["X-Greenway-Input-Tokens"] == "41"
     assert response.headers["X-Greenway-Output-Tokens"] == "7"
+    assert response.headers["X-Greenway-Token-Source"] == "provider"
 
 
 def test_prompt_bodies_are_not_logged_by_default(monkeypatch, caplog):

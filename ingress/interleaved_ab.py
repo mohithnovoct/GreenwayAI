@@ -71,8 +71,11 @@ def percentile(values: list[float], fraction: float) -> float:
     return sorted(values)[min(int(len(values) * fraction), len(values) - 1)]
 
 
-def resource_state() -> tuple[float, float | None]:
-    load_average = os.getloadavg()[0]
+def resource_state() -> tuple[float | None, float | None]:
+    try:
+        load_average = os.getloadavg()[0]
+    except (AttributeError, OSError):
+        load_average = None
     available_memory_mib = None
     try:
         with open("/proc/meminfo", encoding="utf-8") as meminfo:
@@ -86,8 +89,9 @@ def resource_state() -> tuple[float, float | None]:
 
 def format_resource_state(label: str) -> str:
     load_average, available_memory_mib = resource_state()
+    load = f"{load_average:.2f}" if load_average is not None else "unavailable"
     memory = f"{available_memory_mib:.1f} MiB" if available_memory_mib is not None else "unknown"
-    return f"{label}: load_avg_1m={load_average:.2f} available_memory={memory}"
+    return f"{label}: load_avg_1m={load} available_memory={memory}"
 
 
 async def main(args: argparse.Namespace) -> None:
@@ -156,11 +160,11 @@ async def main(args: argparse.Namespace) -> None:
     print()
     print(f"Difference (enabled - disabled) at p50: {diff:+.2f} ms")
     if abs(diff) < 5:
-        print("→ No significant difference (< 5ms)")
+        print("Result: No significant difference (< 5ms)")
     elif diff > 0:
-        print(f"→ Enabled is slower by {diff:.2f}ms (possible carbon path cost)")
+        print(f"Result: Enabled is slower by {diff:.2f}ms (possible carbon path cost)")
     else:
-        print(f"→ Disabled is slower by {abs(diff):.2f}ms (carbon path not a cause)")
+        print(f"Result: Disabled is slower by {abs(diff):.2f}ms (carbon path not a cause)")
 
     if args.telemetry:
         print()

@@ -29,6 +29,12 @@ def usage(payload: dict[str, Any]) -> tuple[int, int]:
     return int(values.get("prompt_tokens", 0)), int(values.get("completion_tokens", 0))
 
 
+def estimate_gateway_tax_ms(gateway_ms: float, headers: httpx.Headers) -> float | None:
+    """Estimate gateway overhead by subtracting its measured upstream round trip."""
+    upstream_ms = headers.get("x-greenway-round-trip-ms")
+    return gateway_ms - float(upstream_ms) if upstream_ms is not None else None
+
+
 def compliance(text: str) -> dict[str, Any]:
     bullets = [line for line in text.splitlines() if re.match(r"^\s*(?:[-*]|\d+[.)])\s+", line)]
     return {
@@ -70,18 +76,21 @@ async def main(args: argparse.Namespace) -> None:
                     "energy_kwh": gateway_headers.get("x-greenway-energy-kwh"),
                     "carbon_gco2e": gateway_headers.get("x-greenway-carbon-gco2e"),
                     "gateway_ms": gateway_ms,
-                    "gateway_tax_ms": None,
+                    "gateway_tax_ms": estimate_gateway_tax_ms(gateway_ms, gateway_headers),
                 })
                 print(json.dumps(records[-1], ensure_ascii=True), flush=True)
 
     for arm in ("baseline", "optimized"):
         rows = [row for row in records if row["arm"] == arm]
+        gateway_tax_values = [
+            row["gateway_tax_ms"] for row in rows if row["gateway_tax_ms"] is not None
+        ]
         print(json.dumps({
             "aggregate": arm,
             "requests": len(rows),
             "mean_input_tokens": statistics.fmean(row["input_tokens"] for row in rows),
             "mean_output_tokens": statistics.fmean(row["output_tokens"] for row in rows),
-            "mean_gateway_tax_ms": None,
+            "mean_gateway_tax_ms": statistics.fmean(gateway_tax_values) if gateway_tax_values else None,
             "compliance_rate": statistics.fmean(row["compliance"]["five_or_fewer_bullets"] for row in rows),
         }))
 
@@ -89,6 +98,6 @@ async def main(args: argparse.Namespace) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--baseline-gateway", default="http://127.0.0.1:8000/v1/chat/completions")
-    parser.add_argument("--optimized-gateway", default="http://127.0.0.1:8001/v1/chat/completions")
+    parser.add_argument("--optimized-gateway", default="http://127.0.0.1:8002/v1/chat/completions")
     parser.add_argument("--rounds", type=int, default=10)
     asyncio.run(main(parser.parse_args()))

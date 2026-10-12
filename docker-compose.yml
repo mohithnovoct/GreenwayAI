@@ -1,5 +1,6 @@
 services:
   gateway:
+    hostname: greenwayai-gateway
     build:
       context: .
       dockerfile: ingress/Dockerfile
@@ -9,10 +10,35 @@ services:
     environment:
       GREENWAY_BACKEND_MODE: ${GREENWAY_BACKEND_MODE:-mock}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GREENWAY_ENERGY_MODE: ${GREENWAY_ENERGY_MODE:-nvml}
       VLLM_BACKEND_URL: ${VLLM_BACKEND_URL:-http://mock-backend:8001}
       OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: http://otel-collector:4318/v1/metrics
+      PROMPT_OPT_ENABLED: "false"
     ports:
       - "8000:8000"
+    depends_on:
+      redis:
+        condition: service_healthy
+      mock-backend:
+        condition: service_healthy
+
+  gateway-optimized:
+    hostname: greenwayai-gateway
+    build:
+      context: .
+      dockerfile: ingress/Dockerfile
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      GREENWAY_BACKEND_MODE: ${GREENWAY_BACKEND_MODE:-mock}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GREENWAY_ENERGY_MODE: ${GREENWAY_ENERGY_MODE:-nvml}
+      VLLM_BACKEND_URL: ${VLLM_BACKEND_URL:-http://mock-backend:8001}
+      OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: http://otel-collector:4318/v1/metrics
+      PROMPT_OPT_ENABLED: "true"
+    ports:
+      - "8002:8000"
     depends_on:
       redis:
         condition: service_healthy
@@ -24,6 +50,8 @@ services:
       context: .
       dockerfile: ingress/Dockerfile
     command: ["uvicorn", "ingress.mock_backend:app", "--host", "0.0.0.0", "--port", "8001", "--workers", "4"]
+    environment:
+      GREENWAY_MOCK_ADAPTIVE_RESPONSES: ${GREENWAY_MOCK_ADAPTIVE_RESPONSES:-false}
     ports:
       - "8001:8001"
     healthcheck:
