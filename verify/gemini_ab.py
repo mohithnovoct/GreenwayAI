@@ -2,6 +2,7 @@
 
 import argparse
 import asyncio
+from datetime import datetime, timezone
 import json
 import os
 import re
@@ -61,12 +62,25 @@ async def main(args: argparse.Namespace) -> None:
             order = ("baseline", "optimized") if round_number % 2 else ("optimized", "baseline")
             for arm in order:
                 gateway_url = args.baseline_gateway if arm == "baseline" else args.optimized_gateway
+                attempted_at_utc = datetime.now(timezone.utc).isoformat()
+                print(
+                    json.dumps(
+                        {
+                            "event": "request_attempt",
+                            "round": round_number,
+                            "arm": arm,
+                            "attempted_at_utc": attempted_at_utc,
+                        }
+                    ),
+                    flush=True,
+                )
                 gateway_payload, gateway_headers, gateway_ms = await call(client, gateway_url, payloads[arm])
                 input_tokens, output_tokens = usage(gateway_payload)
                 response_text = gateway_payload.get("choices", [{}])[0].get("message", {}).get("content", "")
                 records.append({
                     "round": round_number,
                     "arm": arm,
+                    "attempted_at_utc": attempted_at_utc,
                     "prompt": prompts[arm],
                     "response": gateway_payload,
                     "response_text": response_text,

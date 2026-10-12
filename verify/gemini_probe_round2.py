@@ -86,17 +86,17 @@ async def request_with_retries(
             "attempt_number_for_sample": retry_number + 1,
             "attempted_at_utc": datetime.now(timezone.utc).isoformat(),
         }
+        attempts.append(attempt)
+        persist_json(attempts_path, {"attempts": attempts})
         try:
             response = await client.post(url, json=payload)
         except httpx.HTTPError as error:
             attempt.update({"transport_error": str(error), "status_code": None, "response_body": None})
-            attempts.append(attempt)
             persist_json(attempts_path, {"attempts": attempts})
             raise
 
         attempt["status_code"] = response.status_code
         attempt["response_body"] = response.text
-        attempts.append(attempt)
         persist_json(attempts_path, {"attempts": attempts})
 
         if response.status_code in RETRY_STATUSES and retry_number < MAX_RETRIES:

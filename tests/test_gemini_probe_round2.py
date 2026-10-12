@@ -1,5 +1,6 @@
 import asyncio
 import json
+import json as json_module
 
 import httpx
 import pytest
@@ -61,13 +62,20 @@ def test_probe_metrics_count_hidden_tokens_and_structure():
 
 def test_retry_records_failed_attempt_and_reuses_same_sample(monkeypatch, tmp_path):
     class StubClient:
-        def __init__(self):
+        def __init__(self, attempts_path):
+            self.attempts_path = attempts_path
+            self.call_count = 0
             self.responses = [
                 httpx.Response(503, text="temporary unavailable", request=httpx.Request("POST", "https://example.test")),
                 httpx.Response(200, text='{"ok":true}', request=httpx.Request("POST", "https://example.test")),
             ]
 
         async def post(self, url, *, json):
+            persisted = json_module.loads(self.attempts_path.read_text(encoding="utf-8"))
+            assert len(persisted["attempts"]) == self.call_count + 1
+            assert persisted["attempts"][-1]["attempted_at_utc"]
+            assert "status_code" not in persisted["attempts"][-1]
+            self.call_count += 1
             return self.responses.pop(0)
 
     sleep_calls = []
@@ -78,14 +86,15 @@ def test_retry_records_failed_attempt_and_reuses_same_sample(monkeypatch, tmp_pa
     monkeypatch.setattr("verify.gemini_probe_round2.asyncio.sleep", fake_sleep)
     attempts = []
     sample = {"sample_number": 2, "shape": "focused_explanation", "arm": "optimized"}
+    attempts_path = tmp_path / "attempts.json"
     response, _ = asyncio.run(
         request_with_retries(
-            StubClient(),
+            StubClient(attempts_path),
             url="https://example.test",
             payload={"sample": 2},
             sample=sample,
             attempts=attempts,
-            attempts_path=tmp_path / "attempts.json",
+            attempts_path=attempts_path,
             last_request_at=None,
             attempt_budget=3,
         )
@@ -95,5 +104,6 @@ def test_retry_records_failed_attempt_and_reuses_same_sample(monkeypatch, tmp_pa
     assert [attempt["sample_number"] for attempt in attempts] == [2, 2]
     assert [attempt["attempt_number_for_sample"] for attempt in attempts] == [1, 2]
     assert [attempt["status_code"] for attempt in attempts] == [503, 200]
+    assert all(attempt["attempted_at_utc"] for attempt in attempts)
     assert attempts[0]["response_body"] == "temporary unavailable"
     assert sleep_calls == [pytest.approx(30)]
