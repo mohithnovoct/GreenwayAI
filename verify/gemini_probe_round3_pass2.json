@@ -1,0 +1,338 @@
+[
+ {
+  "sample": 1,
+  "item": "definition",
+  "decision": "YES",
+  "quote": "a unique, client-generated string that is sent with a request to identify that specific operation",
+  "reason": "Key sent with a request identifying the specific (same logical) operation being retried."
+ },
+ {
+  "sample": 1,
+  "item": "stored_data",
+  "decision": "YES",
+  "quote": "The server stores the idempotency key along with some metadata, primarily the **outcome of the original successful request (e.g., the HTTP status code and response body)**",
+  "reason": "Server stores key with original status and body."
+ },
+ {
+  "sample": 1,
+  "item": "retention",
+  "decision": "YES",
+  "quote": "The server stores this information for a **configurable period**, often ranging from a few hours to a few days",
+  "reason": "Limited, configurable period; keys purged on expiry."
+ },
+ {
+  "sample": 1,
+  "item": "retry_vs_duplicate",
+  "decision": "YES",
+  "quote": "resending the request with the same key will simply return the original success response. No new side effects are generated on the server.",
+  "reason": "Same-key retry returns original result; response also contrasts with no-key retry treated as brand new request duplicating side effects."
+ },
+ {
+  "sample": 1,
+  "item": "example",
+  "decision": "YES",
+  "quote": "The server's success response (`HTTP 200 OK`) fails to reach the client.",
+  "reason": "Failure-mode and fix example: success, response lost, retry duplicates without key, same key prevents second charge."
+ },
+ {
+  "sample": 2,
+  "item": "definition",
+  "decision": "NO",
+  "quote": null,
+  "reason": "Calls it a unique token sent by the client with the request but never says it identifies the same logical operation across retries."
+ },
+ {
+  "sample": 2,
+  "item": "stored_data",
+  "decision": "YES",
+  "quote": "The server stores this key with the request's outcome (success/failure) for a limited time",
+  "reason": "Stores key with outcome."
+ },
+ {
+  "sample": 2,
+  "item": "retention",
+  "decision": "YES",
+  "quote": "for a limited time (e.g., 24 hours, or until the operation is considered \"finalized\")",
+  "reason": "Limited time with duration given."
+ },
+ {
+  "sample": 2,
+  "item": "retry_vs_duplicate",
+  "decision": "NO",
+  "quote": null,
+  "reason": "Says the server retrieves and returns the previous outcome, but never explicitly says the operation is not executed again (and its 'safe retry re-executes a request' wording muddies this)."
+ },
+ {
+  "sample": 2,
+  "item": "example",
+  "decision": "YES",
+  "quote": "A `POST /payments` request to charge $100 fails due to network timeout *after* the payment processor confirms success. Without an idempotency key, retrying the `POST` would charge $100 *again*.",
+  "reason": "Success followed by timeout, duplicate charge without key, key returns prior outcome and prevents double charge."
+ },
+ {
+  "sample": 3,
+  "item": "definition",
+  "decision": "YES",
+  "quote": "An idempotency key is a unique, client-generated token for each *logical* request.",
+  "reason": "Token per logical request; same key reused on retry (safe-retry bullet)."
+ },
+ {
+  "sample": 3,
+  "item": "stored_data",
+  "decision": "YES",
+  "quote": "The server stores this key with the request's result (e.g., \"success\" or \"failed transaction ID\") for a limited time",
+  "reason": "Stores key with result."
+ },
+ {
+  "sample": 3,
+  "item": "retention",
+  "decision": "YES",
+  "quote": "for a limited time (e.g., 24 hours)",
+  "reason": "Limited time, 24 hours."
+ },
+ {
+  "sample": 3,
+  "item": "retry_vs_duplicate",
+  "decision": "YES",
+  "quote": "The server detects the key, returns the original result, and avoids processing it again.",
+  "reason": "Same-key retry returns original; contrasted with no-key retry treated as new request with multiple executions."
+ },
+ {
+  "sample": 3,
+  "item": "example",
+  "decision": "NO",
+  "quote": null,
+  "reason": "Example says the first request 'fails' and times out; it never states the initial operation succeeded with its response lost."
+ },
+ {
+  "sample": 4,
+  "item": "definition",
+  "decision": "YES",
+  "quote": "An **idempotency key** is a unique, client-generated identifier that accompanies a request. It signals to the server that all requests bearing the same key represent the *same logical operation*.",
+  "reason": "Explicit definition."
+ },
+ {
+  "sample": 4,
+  "item": "stored_data",
+  "decision": "YES",
+  "quote": "It stores a record associating the **idempotency key** with the **outcome of that request**. The outcome includes the status code, response headers, and response body",
+  "reason": "Explicit storage of outcome."
+ },
+ {
+  "sample": 4,
+  "item": "retention",
+  "decision": "YES",
+  "quote": "This stored state is generally kept for a limited duration, often 24 hours or longer",
+  "reason": "Limited duration with example; keys eventually expire."
+ },
+ {
+  "sample": 4,
+  "item": "retry_vs_duplicate",
+  "decision": "YES",
+  "quote": "it **does not re-process the request**. Instead, it returns the *same response* that was generated during the initial successful processing.",
+  "reason": "Same-key retry returns original without re-processing; duplicated side effect contrasted without key."
+ },
+ {
+  "sample": 4,
+  "item": "example",
+  "decision": "YES",
+  "quote": "Server finds `abc-123` in its records, sees that the order for \"Product X\" was successfully created, and returns the *original success response* without creating a new order.",
+  "reason": "Orders (and transfer) example: success, response lost, duplicate without key, same key prevents second order."
+ },
+ {
+  "sample": 5,
+  "item": "connect_and_read_timeouts",
+  "decision": "YES",
+  "quote": "This is often the more significant timeout for application logic and can range from **10 seconds to several minutes** depending on the API's nature.",
+  "reason": "Gives values for read (10s to minutes) and for connect (2-5 seconds, earlier line)."
+ },
+ {
+  "sample": 5,
+  "item": "transient_failures",
+  "decision": "YES",
+  "quote": "**Do NOT Retry:** `4xx` client errors (e.g., `400 Bad Request`, `401 Unauthorized`",
+  "reason": "Retries 5xx/network errors; excludes 4xx client errors."
+ },
+ {
+  "sample": 5,
+  "item": "backoff_jitter",
+  "decision": "YES",
+  "quote": "**Implementation:** Add a random amount of time to the calculated backoff delay.",
+  "reason": "Exponential backoff with random jitter."
+ },
+ {
+  "sample": 5,
+  "item": "retry_after",
+  "decision": "YES",
+  "quote": "includes a `Retry-After` header, **always honor it immediately**.",
+  "reason": "Names Retry-After and says honor it."
+ },
+ {
+  "sample": 5,
+  "item": "attempt_bound",
+  "decision": "YES",
+  "quote": "A common range is **3-5 attempts**.",
+  "reason": "Finite attempt count (and total time limit)."
+ },
+ {
+  "sample": 5,
+  "item": "non_idempotent_safety",
+  "decision": "YES",
+  "quote": "**Non-idempotent operations:** **DO NOT RETRY** them unless you are *certain* the external API handles idempotency for them (e.g., via an idempotency key mechanism).",
+  "reason": "Do not retry non-idempotent unless protected by idempotency key (supporting text says to include key)."
+ },
+ {
+  "sample": 5,
+  "item": "monitoring_signal",
+  "decision": "YES",
+  "quote": "Also, track the count of successful vs. failed retries.",
+  "reason": "Names retry counts as signal; ties misconfiguration to retry outcomes."
+ },
+ {
+  "sample": 6,
+  "item": "connect_and_read_timeouts",
+  "decision": "YES",
+  "quote": "**`read_timeout`:** Longer (e.g., 10-30s). For data transfer. Choose based on expected API response times.",
+  "reason": "Connect 2-5s and read 10-30s both given."
+ },
+ {
+  "sample": 6,
+  "item": "transient_failures",
+  "decision": "YES",
+  "quote": "Only retry `httpx.ConnectError`, `httpx.TimeoutException`, and HTTP 5xx *internal* server errors (excluding 501, 505, etc.).",
+  "reason": "Retries network/5xx only and excludes non-transient 501/505 (4xx not named explicitly)."
+ },
+ {
+  "sample": 6,
+  "item": "backoff_jitter",
+  "decision": "YES",
+  "quote": "Implement exponential backoff (e.g., `min_delay * (factor ** attempt_num)`) plus jitter to prevent thundering herd.",
+  "reason": "Names exponential backoff plus jitter."
+ },
+ {
+  "sample": 6,
+  "item": "retry_after",
+  "decision": "YES",
+  "quote": "Honor `Retry-After` header if present.",
+  "reason": "Names and honors Retry-After."
+ },
+ {
+  "sample": 6,
+  "item": "attempt_bound",
+  "decision": "YES",
+  "quote": "Define a maximum number of retry attempts (e.g., 3-5).",
+  "reason": "Finite max attempts."
+ },
+ {
+  "sample": 6,
+  "item": "non_idempotent_safety",
+  "decision": "YES",
+  "quote": "Do NOT retry non-idempotent operations (POST, PUT without full payload, PATCH, DELETE) unless protected by an idempotency key",
+  "reason": "Explicit."
+ },
+ {
+  "sample": 6,
+  "item": "monitoring_signal",
+  "decision": "NO",
+  "quote": null,
+  "reason": "Signals named are p99 latency and success rate, not a retry-related signal such as retry rate."
+ },
+ {
+  "sample": 7,
+  "item": "connect_and_read_timeouts",
+  "decision": "YES",
+  "quote": "`read_timeout`: Longer (e.g., 5-30s), for receiving response bytes.",
+  "reason": "Connect 1-3s and read 5-30s both given."
+ },
+ {
+  "sample": 7,
+  "item": "transient_failures",
+  "decision": "YES",
+  "quote": "**Transient Failures Only:** Retry `httpx.ConnectError`, `httpx.ReadTimeout`, `httpx.HTTPStatusError` for 5xx codes, `httpx.NetworkError`.",
+  "reason": "Retries transient/5xx/network only; 4xx exclusion only implied by 'only'."
+ },
+ {
+  "sample": 7,
+  "item": "backoff_jitter",
+  "decision": "YES",
+  "quote": "**Exponential Backoff with Jitter:** `wait_time = min(max_wait_time, base_delay * (2^attempt) + jitter_ms)`.",
+  "reason": "Names exponential backoff and jitter."
+ },
+ {
+  "sample": 7,
+  "item": "retry_after",
+  "decision": "YES",
+  "quote": "**Honor `Retry-After`:** If present, use its value over calculated backoff.",
+  "reason": "Explicit."
+ },
+ {
+  "sample": 7,
+  "item": "attempt_bound",
+  "decision": "YES",
+  "quote": "**Bounded Attempts:** Set a `max_retries` (e.g., 3-5).",
+  "reason": "Finite max."
+ },
+ {
+  "sample": 7,
+  "item": "non_idempotent_safety",
+  "decision": "YES",
+  "quote": "**Only retry non-idempotent operations if protected by an idempotency key.**",
+  "reason": "Explicit."
+ },
+ {
+  "sample": 7,
+  "item": "monitoring_signal",
+  "decision": "NO",
+  "quote": null,
+  "reason": "Signal named is p99 API call duration, not a retry-related signal such as retry rate."
+ },
+ {
+  "sample": 8,
+  "item": "connect_and_read_timeouts",
+  "decision": "YES",
+  "quote": "**Read Timeout (e.g., 5-30 seconds):**",
+  "reason": "Connect 2-5s and read 5-30s both given, with selection rules."
+ },
+ {
+  "sample": 8,
+  "item": "transient_failures",
+  "decision": "YES",
+  "quote": "`4xx` errors (except `408`, `429`): Usually indicate client-side errors (e.g., `400 Bad Request`, `401 Unauthorized`, `403 Forbidden`, `404 Not Found`). Retrying these will not fix the underlying issue",
+  "reason": "Retries network/5xx; excludes 4xx."
+ },
+ {
+  "sample": 8,
+  "item": "backoff_jitter",
+  "decision": "YES",
+  "quote": "**Jitter:** Add a random component (e.g., 20-50%) to the calculated backoff delay.",
+  "reason": "Exponential backoff with random jitter."
+ },
+ {
+  "sample": 8,
+  "item": "retry_after",
+  "decision": "YES",
+  "quote": "includes a `Retry-After` header, **always honor it**.",
+  "reason": "Explicit."
+ },
+ {
+  "sample": 8,
+  "item": "attempt_bound",
+  "decision": "YES",
+  "quote": "**Max Retries:** Define a maximum number of retry attempts (e.g., 3-5).",
+  "reason": "Finite max (plus total timeout)."
+ },
+ {
+  "sample": 8,
+  "item": "non_idempotent_safety",
+  "decision": "YES",
+  "quote": "If non-idempotent operations *must* be retried, ensure the external API supports and you provide an **idempotency key**",
+  "reason": "Do not retry non-idempotent unless idempotency key provided."
+ },
+ {
+  "sample": 8,
+  "item": "monitoring_signal",
+  "decision": "NO",
+  "quote": null,
+  "reason": "The named signal is P99 latency of failed calls by failure reason, not a retry-specific measurement such as retry rate or retries per request."
+ }
+]
