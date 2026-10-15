@@ -2,7 +2,7 @@
 
 | Phase | Claim | Current evidence | Status |
 |---|---|---|---|
-| 3 | Green prompt engineering reduces energy/carbon through shorter, equally useful real-model outputs. | Round 1 used n=1 per arm on a broad exhaustive prompt; both hit the 512-token cap. Round 2's corrected tally: how-to optimized completed at 768 tokens/429 words while baseline was truncated at >=1024 tokens/>=575 words (at least 25% fewer tokens and words); focused explanation was truncated in both arms; paragraph outputs were an unchanged-prompt A/A pair (~5.5% word-count noise), excluded from the optimizer tally. One qualifying shape is below the 2-shape threshold. V2 and an 8-request, quota-gated replication are prepared but not run. Energy uses a placeholder coefficient identical to lca-demo, so no causal energy claim follows. September estimates remain superseded. | Round 2 directional; replication pending |
+| 3 | Green prompt engineering reduces energy/carbon through shorter, equally useful real-model outputs. | Round 3 (two pairs per shape) reduced mean provider completion tokens by 78.02% for focused explanation (1055.5 to 232) and 82.21% for the short how-to (1816 to 323). Resolved mean coverage fell from 5/5 to 4/5 and 7/7 to 6/7, respectively; both shapes are "shorter but less complete", so the preregistered two-shape qualification rule was not met. Energy deltas (-74.58%, -80.04%) are placeholder-coefficient proxy estimates shared with lca-demo, not measured or Google-published values. September estimates remain superseded. | Shorter outputs observed; equal usefulness and energy/carbon savings not established |
 
 ## Phase 3 validation state
 
@@ -14,46 +14,38 @@ example indicates that `completion_tokens` excludes hidden thinking, so
 parametric decode energy uses the larger of visible completion and
 `total_tokens - prompt_tokens`, logging visible and hidden counts separately.
 Round 1 had n=1 per arm; both outputs were truncated at 512 on a prompt that
-asks for extensive coverage while the optimizer asks for brevity. The
-length instruction did not shorten output on this prompt at this cap; the
-result is inconclusive rather than evidence that the model ignores the
-optimizer. In round 2, one how-to pair had at least 25% fewer tokens and words
-in the complete optimized response (768 tokens/429 words) than the truncated
-baseline (at least 1024 tokens/575 words). The focused pair was truncated in
-both arms. The paragraph pair used identical effective prompts, so its
-182-vs-172-word difference is A/A noise (~5.5%) and is excluded. The corrected
-tally is one qualifying shape, one A/A, and one truncated in both; the
-2-of-3 threshold was not met. The variations instruction increased the
-focused response in this single-shot test; any benefit from avoiding
-follow-up prompts was not tested. The how-to's five top-level bullets and 18
-total bullet lines met the instruction's literal cap but not its intent.
+asks for extensive coverage while the optimizer asks for brevity. The length
+instruction did not shorten output on that prompt at this cap; this did not
+establish that the model ignored the optimizer. Round 2 had one qualifying
+how-to pair, one unchanged-prompt A/A pair, and one shape truncated in both
+arms; the corrected two-of-three threshold was not met. The variations
+instruction increased the focused response in that single-shot test; any
+benefit from avoiding follow-up prompts was not tested. The how-to's five
+top-level bullets and 18 total bullet lines met the literal cap but not its
+intent.
 
-Optimizer v2 is implemented offline: it adds a configurable word cap instead
-of a five-bullet instruction and combines variations only when explicitly
-enabled. An 8-request replication is pre-registered at 2048 output tokens,
-with two counterbalanced pairs for each of the focused explanation and
-how-to. Per-shape noise is the word-count spread between the two baseline
-responses; the paragraph A/A request is dropped. A shape counts only if all
-four outputs stop, both optimized prompts changed, optimized words beat the
-baseline mean by more than baseline spread, and mean optimized coverage is
-not lower. A shorter result that loses coverage is reported as "shorter but
-less complete." A larger run is planned only if both shapes count. Run only
-after a fresh quota check confirms at least 10 RPD remaining. The committed
-rubric contains objective yes/no checks (5 focused-explanation elements and
-7 how-to elements). Each response is scored twice (agent pass 1 and
-independent pass 2); random labels omit arm/sample identifiers, but length can
-reveal the arm, so scoring is rubric-bound, not blind. Report raw per-item
-agreement; disagreements are resolved by quoting response text without
-consulting the arm. Predictions: focused explanation passes coverage at 150
-words; how-to is shorter but fails coverage at 150 words. If the latter is
-shorter but less complete, design v3 with a cap scaled to required elements;
-if both shapes pass, plan a larger run. No requests were sent while preparing
-this plan.
+Round 3 subsequently ran eight requests at `max_tokens=2048`, with two
+counterbalanced pairs for each of the focused explanation and how-to. Both
+shapes had all four responses stop, optimizer changes on both optimized
+prompts, and optimized mean word counts below the baseline mean minus the
+baseline spread. After resolving independent scoring disagreements against the
+frozen rubric, mean coverage was 5/5 baseline versus 4/5 optimized for focused
+explanation, and 7/7 versus 6/7 for the how-to. Both shapes are **shorter but
+less complete** and neither qualifies under the preregistered rule. The
+focused-explanation coverage prediction did not hold; the how-to coverage
+prediction did. Because both shapes must qualify, no larger run was triggered.
 
-The local vLLM service is disabled because the container has no GPU. Phase 3
-should not close on mock-backend evidence alone. Gemini connectivity and
-provider-reported usage are confirmed; thinking-budget consumption is
-supported by the first controlled probe, and the explicit 512-token limit
-explains the two longer truncations. The Gemini energy coefficients are an
-explicit placeholder copied from `lca-demo`, not a model-specific
-measurement. Real-model energy/carbon effects remain unvalidated.
+Pass 1 and independent pass 2 agreed on 43/48 decisions overall (89.58%):
+18/20 (90%) for focused explanation and 25/28 (89.29%) for the how-to. The
+scoring is rubric-bound, not blind, because response length and phrasing can
+reveal the arm. Both score files, exact disagreement adjudications, quoted
+evidence, item agreement, and resolved coverage totals are recorded in
+[`verify/gemini_probe_round3_adjudications.json`](../verify/gemini_probe_round3_adjudications.json).
+
+The round-3 energy deltas were -74.58% for focused explanation and -80.04% for
+the how-to, but they are **placeholder-coefficient proxy estimates** using a
+row copied from `lca-demo`, not model-specific or Google-published
+measurements. They do not establish real-model energy/carbon savings; outputs
+were also less complete on both shapes. The September Gemini figures
+`0.000102263335 kWh` and `0.038811930061 gCO2e` remain superseded because they
+were computed under the old NVML-tier accounting behavior.

@@ -1,0 +1,192 @@
+{
+  "sources": {
+    "pass1": "gemini_probe_round3_pass1.json",
+    "pass2": "gemini_probe_round3_pass2.json",
+    "responses": "gemini_probe_round3_responses.json",
+    "rubric": "gemini_probe_round3_rubric.json",
+    "pass2_committed_before_comparison": "7385ec39f4422939604d3479858bfb76b8b8b23a"
+  },
+  "pass2_yes_quote_validation": {
+    "yes_decisions": 42,
+    "verbatim_quotes": 42,
+    "invalid_quotes": 0
+  },
+  "agreement": {
+    "overall": {
+      "agree": 43,
+      "total": 48,
+      "raw_percent": 89.5833
+    },
+    "focused_explanation": {
+      "agree": 18,
+      "total": 20,
+      "raw_percent": 90.0,
+      "items": {
+        "definition": "3/4",
+        "stored_data": "4/4",
+        "retention": "4/4",
+        "retry_vs_duplicate": "4/4",
+        "example": "3/4"
+      }
+    },
+    "short_how_to": {
+      "agree": 25,
+      "total": 28,
+      "raw_percent": 89.2857,
+      "items": {
+        "connect_and_read_timeouts": "4/4",
+        "transient_failures": "2/4",
+        "backoff_jitter": "4/4",
+        "retry_after": "4/4",
+        "attempt_bound": "4/4",
+        "non_idempotent_safety": "4/4",
+        "monitoring_signal": "3/4"
+      }
+    }
+  },
+  "disagreements": [
+    {
+      "sample": 2,
+      "shape": "focused_explanation",
+      "item": "definition",
+      "pass1": 1,
+      "pass2": 0,
+      "final_score": 0,
+      "who_was_right": "independent_pass2",
+      "rubric_clause": "YES only if the response explicitly calls an idempotency key a unique identifier, token, or key sent with a request to identify the same logical operation across retries; otherwise NO.",
+      "response_quotes": [
+        "An idempotency key is a unique token (e.g., UUID) sent by the client with the request.",
+        "Idempotency keys prevent duplicate side effects from retried requests."
+      ],
+      "resolution": "The response defines a unique token sent with a request, but does not explicitly say that the key identifies the same logical operation across retries. The criterion requires that identifying claim, so NO."
+    },
+    {
+      "sample": 3,
+      "shape": "focused_explanation",
+      "item": "example",
+      "pass1": 1,
+      "pass2": 0,
+      "final_score": 1,
+      "who_was_right": "agent_pass1",
+      "rubric_clause": "YES only if one concrete retry scenario states that the operation would execute twice without an idempotency key AND explicitly states that reusing the same key prevents the second effect; otherwise NO.",
+      "response_quotes": [
+        "Without an idempotency key, the API charges $100 *twice*.",
+        "User retries with *same* `id-key-A1`. Server sees `id-key-A1` already processed (or processing) and returns original success/failure status, preventing duplicate charges."
+      ],
+      "resolution": "The example explicitly states the duplicate effect without a key and that reusing the same key prevents duplicate charges. The rubric does not require the first operation to have succeeded or its response to have been lost."
+    },
+    {
+      "sample": 6,
+      "shape": "short_how_to",
+      "item": "transient_failures",
+      "pass1": 0,
+      "pass2": 1,
+      "final_score": 1,
+      "who_was_right": "independent_pass2",
+      "rubric_clause": "YES only if the response says to retry transient failures (such as 5xx/network errors) and exclude non-transient/client failures (such as ordinary 4xx); otherwise NO.",
+      "response_quotes": [
+        "Only retry `httpx.ConnectError`, `httpx.TimeoutException`, and HTTP 5xx *internal* server errors (excluding 501, 505, etc.)."
+      ],
+      "resolution": "The response explicitly limits retries to the listed network/time-out failures and HTTP 5xx, excluding ordinary 4xx client failures from the retry set. This satisfies both parts of the clause."
+    },
+    {
+      "sample": 7,
+      "shape": "short_how_to",
+      "item": "transient_failures",
+      "pass1": 0,
+      "pass2": 1,
+      "final_score": 1,
+      "who_was_right": "independent_pass2",
+      "rubric_clause": "YES only if the response says to retry transient failures (such as 5xx/network errors) and exclude non-transient/client failures (such as ordinary 4xx); otherwise NO.",
+      "response_quotes": [
+        "**Transient Failures Only:** Retry `httpx.ConnectError`, `httpx.ReadTimeout`, `httpx.HTTPStatusError` for 5xx codes, `httpx.NetworkError`."
+      ],
+      "resolution": "The response explicitly says only those listed network, timeout, and 5xx failures are retried; ordinary 4xx client failures are outside that exclusive set. This satisfies both parts of the clause."
+    },
+    {
+      "sample": 8,
+      "shape": "short_how_to",
+      "item": "monitoring_signal",
+      "pass1": 1,
+      "pass2": 0,
+      "final_score": 1,
+      "who_was_right": "agent_pass1",
+      "rubric_clause": "YES only if the response names a measurable retry-related signal (for example, retry rate or retries per request) that can expose misconfiguration; otherwise NO.",
+      "response_quotes": [
+        "If `Retry-After` isn't honored, you'll see repeated `429` or `503` errors from the same origin within short intervals."
+      ],
+      "resolution": "Repeated 429/503 errors from the same origin in short intervals are an observable retry-related signal explicitly tied to a Retry-After misconfiguration, so YES."
+    }
+  ],
+  "resolved_coverage": {
+    "focused_explanation": {
+      "baseline_mean": 5.0,
+      "optimized_mean": 4.0,
+      "optimized_coverage_not_lower": false
+    },
+    "short_how_to": {
+      "baseline_mean": 7.0,
+      "optimized_mean": 6.0,
+      "optimized_coverage_not_lower": false
+    }
+  },
+  "preregistered_rule": {
+    "focused_explanation": {
+      "all_four_stop": true,
+      "both_optimized_prompts_changed": true,
+      "shorter_than_baseline_mean_minus_spread": true,
+      "coverage_not_lower": false,
+      "finding": "shorter but less complete",
+      "qualifies": false
+    },
+    "short_how_to": {
+      "all_four_stop": true,
+      "both_optimized_prompts_changed": true,
+      "shorter_than_baseline_mean_minus_spread": true,
+      "coverage_not_lower": false,
+      "finding": "shorter but less complete",
+      "qualifies": false
+    },
+    "both_shapes_qualify": false,
+    "larger_run_triggered": false,
+    "predictions": {
+      "focused_explanation_passes_coverage": {
+        "predicted": true,
+        "observed": false
+      },
+      "how_to_fails_coverage_at_150_words": {
+        "predicted": true,
+        "observed": true
+      }
+    }
+  },
+  "token_delta": {
+    "focused_explanation": {
+      "baseline_mean_completion_tokens": 1055.5,
+      "optimized_mean_completion_tokens": 232.0,
+      "optimized_minus_baseline": -823.5,
+      "percent_change": -78.02
+    },
+    "short_how_to": {
+      "baseline_mean_completion_tokens": 1816.0,
+      "optimized_mean_completion_tokens": 323.0,
+      "optimized_minus_baseline": -1493.0,
+      "percent_change": -82.21
+    }
+  },
+  "energy_proxy": {
+    "label": "placeholder-coefficient parametric proxy; not Google-published measurements",
+    "focused_explanation": {
+      "baseline_mean_kwh": 0.00076645,
+      "optimized_mean_kwh": 0.0001948,
+      "optimized_minus_baseline_kwh": -0.00057165,
+      "percent_change": -74.58
+    },
+    "short_how_to": {
+      "baseline_mean_kwh": 0.0012997,
+      "optimized_mean_kwh": 0.0002594,
+      "optimized_minus_baseline_kwh": -0.0010403,
+      "percent_change": -80.04
+    }
+  }
+}

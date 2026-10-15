@@ -245,9 +245,9 @@ pending a real model.
 
 ## Real-model evidence: Gemini 2.5 Flash
 
-**Status: round 1 analyzed; round 2 completed; a replicated round 3 is
-prepared but has not been run.** Round-1 evidence, round-2 protocol, corrected
-interpretation, and all six round-2 responses are recorded below.
+**Status: rounds 1-3 completed and analyzed.** Round-1 evidence, the round-2
+corrected interpretation, all six round-2 responses, the round-3
+pre-registration, and the round-3 adjudication are recorded below.
 
 #### Round-2 protocol and quota record
 
@@ -346,14 +346,14 @@ changes because "as a short one-paragraph assessment" matched the optimizer's
 existing role/length heuristics; it was not an optimizer treatment.
 
 The decision threshold was at least two qualifying shapes; only one qualifies,
-so the threshold was not met. Round 3 is prepared as a separate, quota-gated
-experiment below.
+so the threshold was not met. Round 3 was then run as a separately
+quota-gated experiment under the preregistration below.
 
 All energy/carbon numbers above are proxy-coefficient estimates, not
 Google-published measurements. The Gemini row is a placeholder shared with
 `lca-demo`; observed energy deltas are not evidence of a causal energy saving.
 
-#### Round-3 pre-registration (implemented offline; no requests sent)
+#### Round-3 pre-registration (committed before collection)
 
 Optimizer v2 replaces the default five-bullet instruction with a configurable
 word cap (`PROMPT_OPT_WORD_CAP`, default `150`; the optimized instance will use
@@ -414,16 +414,17 @@ below mean baseline coverage. If the first three conditions hold but coverage
 is lower, report **"shorter but less complete"**; that is a task-scaled-cap
 finding, not a success. Plan a larger run only if both shapes count.
 
-Each response is scored twice against only the committed rubric: agent pass 1
+Each response was scored twice against only the committed rubric: agent pass 1
 and an independent pass 2 outside the repository using the single saved
 response export, identified by sample number and containing no arm field.
 Response length and wording can reveal an arm; therefore scoring is
-**rubric-bound, not blind**. Both score sets are attached to the results file
-after the run. Report raw per-item agreement over the four responses for that
-shape/item; Cohen's kappa is not used. Any pass disagreement is resolved by
-quoting the response text for that item, without consulting or re-reading the
-arm assignment. Record the quoted evidence and final 0/1 resolution in the
-agent-pass-1 sheet.
+**rubric-bound, not blind**. Raw per-item agreement over the four responses
+for that shape/item is reported; Cohen's kappa is not used. Any pass
+disagreement is resolved by quoting the response text for that item, without
+consulting the arm assignment. The pass files and the exact resolution record
+are saved separately in `verify/gemini_probe_round3_pass1.json`,
+`verify/gemini_probe_round3_pass2.json`, and
+[`verify/gemini_probe_round3_adjudications.json`](../verify/gemini_probe_round3_adjudications.json).
 
 Predictions, recorded before the run: (a) focused explanation will pass the
 coverage comparison at 150 words; (b) how-to will be shorter but fail coverage
@@ -434,25 +435,61 @@ pass, plan a larger run with more pairs. If either shape is not complete,
 changed, or shorter beyond baseline spread, retain the null/inconclusive
 finding and revise the experiment only as a separately preregistered version.
 
-`verify/gemini_probe_round3.py` saves the full responses, response headers,
-results file, and a sample-number-only response export; it does not score the
+`verify/gemini_probe_round3.py` saved the full responses, response headers,
+results file, and sample-number-only response export; it did not score
 responses during collection. The export has one record per response with only
-`sample_number`, `prompt`, and `response_text`; it has no arm field. Afterward,
-score pass 1 from the saved responses and have the independent scorer use that
-export. Apply both saved score sets only after collection and independent
-scoring are complete. Run
-`uv run python verify/gemini_probe_round3_scoring.py apply --results verify/gemini_probe_round3_results.json --pass1 verify/gemini_probe_round3_pass1.json --pass2 verify/gemini_probe_round3_pass2.json`
-to attach both score sets, require quoted resolutions for disagreements, and
-calculate raw per-item agreement and the preregistered evaluation. The result
-file records the rubric preregistration commit and `git rev-parse HEAD`; the
-runner refuses to start unless the worktree is clean. Before either dry-run or
-requests, it checks that the rubric, prompts, and optimizer are byte-identical
-to the pinned commit using `git diff --quiet <pin> -- <paths>` and verifies
-their Git blob hashes (respecting configured checkout line-ending rules). Any
-alternate rubric file must byte-match the pinned working-tree rubric. The
-runner's `--dry-run` prints all eight assignments,
-settings, expected prompt changes, and effective prompts without contacting
-Gemini.
+`sample_number`, `prompt`, and `response_text`; it has no arm field. The run
+results, attempt log, export, and both scoring passes are saved under
+`verify/`. The run-start snapshot records the pinned rubric commit, HEAD, and
+clean-tree state. Before collection, the runner verified that the rubric,
+prompts, and optimizer were byte-identical to their pinned commit, and its
+dry-run printed all eight assignments/settings/effective prompts without
+contacting Gemini.
+
+#### Round-3 results and score adjudication
+
+The eight planned requests all completed with `finish_reason=stop`. The two
+optimized prompts for each shape had non-empty change records. The primary
+result is the provider completion-token delta:
+
+| Shape | Baseline mean completion tokens | Optimized mean completion tokens | Delta | Baseline mean words (spread) | Optimized mean words |
+|---|---:|---:|---:|---:|---:|
+| Focused explanation | 1055.5 | 232 | -823.5 (-78.02%) | 722 (34) | 142.5 |
+| Short how-to | 1816 | 323 | -1493 (-82.21%) | 1056 (168) | 134 |
+
+The length-only rule passed for both shapes: optimized mean words were below
+the baseline mean by more than the two-baseline word-count spread. Coverage did
+not hold at the same cap:
+
+| Shape | Baseline mean coverage | Optimized mean coverage | Preregistered outcome |
+|---|---:|---:|---|
+| Focused explanation (5 items) | 5/5 | 4/5 | shorter but less complete |
+| Short how-to (7 items) | 7/7 | 6/7 | shorter but less complete |
+
+The predictions were mixed: focused explanation was predicted to preserve
+coverage, but it scored lower; the how-to was predicted to lose coverage, and
+did. Neither shape meets the coverage condition, so neither qualifies and the
+preregistered larger-run trigger (both shapes qualify) was not met. Both
+results show a substantial length reduction at this 150-word instruction, but
+not equally complete outputs.
+
+Pass 1 and independent pass 2 agreed on 43/48 decisions (89.58%): 18/20
+(90.00%) for focused explanation and 25/28 (89.29%) for the how-to. Per-item
+agreement was focused: definition 3/4, stored data 4/4, retention 4/4,
+retry-vs-duplicate 4/4, example 3/4; how-to: connect/read timeouts 4/4,
+transient failures 2/4, backoff/jitter 4/4, Retry-After 4/4, attempt bound
+4/4, non-idempotent safety 4/4, monitoring signal 3/4. All five
+disagreements were adjudicated against the exact rubric and response text; the
+evidence and final decisions are in the adjudication JSON.
+
+The energy comparison is secondary and is a **placeholder-coefficient proxy
+estimate**, not a Google-published figure or measured Gemini energy. The
+focused-explanation means were 0.00076645 kWh baseline and 0.0001948 kWh
+optimized (delta -0.00057165 kWh, -74.58%). The how-to means were 0.0012997
+kWh and 0.0002594 kWh (delta -0.0010403 kWh, -80.04%). The coefficient row
+is shared with `lca-demo`; these values do not establish a causal energy
+saving. With two pairs per shape, this is directional evidence only and does
+not establish statistical significance.
 
 #### Superseded September telemetry
 
