@@ -749,6 +749,11 @@ correctness decision. The benchmark container is limited to 2 CPUs and
 PyTorch intra-op/inter-op threads are each set to 2. Capture host load
 immediately before this batch.
 
+The first workload-template check reported 139-140 model tokens; the runner
+refused to enter warm-up or timing. The template was shortened before any
+latency sample was collected. The committed template now validates at 104-105
+tokens per prompt.
+
 The selected model is `sentence-transformers/all-MiniLM-L6-v2`, pinned to
 revision `1110a243fdf4706b3f48f1d95db1a4f5529b4d41`. Its Hugging Face model
 card lists Apache-2.0; the `model.safetensors` artifact is 90,868,376 bytes

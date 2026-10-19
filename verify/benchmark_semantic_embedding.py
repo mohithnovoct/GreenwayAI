@@ -15,16 +15,14 @@ from optimizers.semantic_cache import (
 
 MODEL_ID = "sentence-transformers/all-MiniLM-L6-v2"
 PROMPT_TEMPLATE = (
-    "Design an API gateway cache for repeated language-model requests. Explain how "
-    "the cache key should include tenant identity, backend model, canonicalized "
-    "messages, and every parameter that affects generated output. Describe the "
-    "exact lookup before inference, when a response may be stored, how expiration "
-    "and tenant isolation prevent unsafe reuse, and how the system should behave "
-    "if the cache or embedding service fails. Include how complete responses "
-    "differ from truncated answers, how concurrent duplicates should be coalesced, "
-    "and which metrics would show cache hits, misses, bypasses, and modeled avoided "
-    "energy. State assumptions explicitly and keep the guidance applicable to a "
-    "small CPU-hosted service. Request case ID {case_id:03d}."
+    "Design an API gateway cache for repeated language-model requests. Define a "
+    "safe key using tenant, model, canonical messages, and output-affecting "
+    "parameters. Describe exact lookup before inference, safe storage of complete "
+    "responses, expiration, and tenant isolation. Explain fail-open behavior when "
+    "Redis or embedding lookup is unavailable, and distinguish complete answers "
+    "from truncated ones. State how concurrent identical misses should coalesce "
+    "and which metrics expose hits, misses, bypasses, and modeled avoided energy. "
+    "Case {case_id:03d}."
 )
 PROMPT_COUNT = 100
 WARMUP_CALLS = 5
