@@ -281,6 +281,8 @@ async def chat_completions(
     exact_enabled = bool(getattr(request.app.state, "exact_cache_enabled", False))
     semantic_cache = getattr(request.app.state, "semantic_cache", None)
     cached_response = None
+    cached_entry_input_tokens: int | None = None
+    cached_entry_decode_tokens: int | None = None
     semantic_embedding: list[float] | None = None
     semantic_similarity: float | None = None
     cache_unavailable = False
@@ -512,7 +514,11 @@ async def chat_completions(
             else "mixed"
         )
         if cached_response is not None:
-            input_tokens = cached_response.original_input_tokens
+            # input_tokens stays the CURRENT request's prompt size. The stored
+            # entry's counts are recorded separately for avoided-energy accounting.
+            input_tokens = estimated_input_tokens
+            cached_entry_input_tokens = cached_response.original_input_tokens
+            cached_entry_decode_tokens = cached_response.decode_tokens
             decode_tokens = cached_response.decode_tokens
             output_tokens_hidden = max(0, decode_tokens - output_tokens)
         elif flight is not None and response_body_for_cache is not None:
@@ -618,6 +624,14 @@ async def chat_completions(
             **(
                 {"semantic_similarity": round(semantic_similarity, 6)}
                 if semantic_similarity is not None
+                else {}
+            ),
+            **(
+                {
+                    "cached_entry_input_tokens": cached_entry_input_tokens,
+                    "cached_entry_decode_tokens": cached_entry_decode_tokens,
+                }
+                if cached_entry_input_tokens is not None
                 else {}
             ),
             **({

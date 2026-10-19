@@ -567,7 +567,10 @@ def test_semantic_cache_hit_for_paraphrase_with_mock_embeddings(
     assert first.headers["x-greenway-cache-tier"] == "miss"
     assert second.headers["x-greenway-cache-tier"] == "semantic"
     assert second.content == first.content
-    assert second.headers["x-greenway-input-tokens"] == "2"
+    # On a hit the header reports the CURRENT request's prompt size (tiktoken
+    # estimate of the paraphrase), not the stored entry's count ("2" was the
+    # first request's provider-reported usage, which encoded the old behavior).
+    assert second.headers["x-greenway-input-tokens"] == "9"
     assert second.headers["x-greenway-output-tokens"] == "2"
     assert backend.backend_calls == 1
     assert telemetry[-2]["cache_tier"] == "miss"
@@ -1133,3 +1136,35 @@ def test_disabled_cache_does_not_load_embedding_model(monkeypatch):
     with TestClient(ingress_app.app):
         assert loaded == []
         assert ingress_app.app.state.semantic_embedder is None
+
+
+def test_hit_rows_record_current_prompt_tokens_and_stored_entry_counts(gateway_harness, caplog):
+    import json as _json
+
+    caplog.set_level("INFO", logger="greenwayai.ingress")
+    client, _, _, _ = gateway_harness
+    body = {
+        "model": "test-model",
+        "messages": [{"role": "user", "content": "token field check"}],
+        "temperature": 0,
+    }
+
+    miss = client.post("/v1/chat/completions", json=body)
+    hit = client.post("/v1/chat/completions", json=body)
+
+    assert [r.headers["x-greenway-cache-tier"] for r in (miss, hit)] == ["miss", "exact"]
+    rows = []
+    for record in caplog.records:
+        try:
+            row = _json.loads(record.getMessage())
+        except ValueError:
+            continue
+        if isinstance(row, dict) and "cache_tier" in row:
+            rows.append(row)
+    miss_row = next(r for r in rows if r["cache_tier"] == "miss")
+    hit_row = next(r for r in rows if r["cache_tier"] == "exact")
+    assert "cached_entry_input_tokens" not in miss_row
+    assert hit_row["cached_entry_input_tokens"] >= 1
+    assert hit_row["cached_entry_decode_tokens"] == hit_row["decode_tokens"]
+    assert hit_row["input_tokens"] == hit_row["optimized_input_tokens"]
+    assert hit_row["energy_kwh"] is None and hit_row["telemetry_source"] == "cache_hit"
