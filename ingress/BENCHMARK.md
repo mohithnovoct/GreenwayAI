@@ -466,6 +466,15 @@ not hold at the same cap:
 | Focused explanation (5 items) | 5/5 | 4/5 | shorter but less complete |
 | Short how-to (7 items) | 7/7 | 6/7 | shorter but less complete |
 
+Sensitivity, holding the final resolutions above fixed: under the original
+`example` criterion requiring an explicit successful operation followed by a
+lost/unreceived response, samples 2 and 3 would not satisfy `example`, giving
+focused-explanation means of 5/5 baseline and 3/5 optimized. If instead only
+sample 8 `monitoring_signal` were scored NO, the how-to means would be 6.5/7
+baseline and 6/7 optimized. These are counterfactual checks; the final scores
+and rule application above continue to use the relaxed, preregistered rubric
+and the adjudicated YES for sample 8.
+
 The predictions were mixed: focused explanation was predicted to preserve
 coverage, but it scored lower; the how-to was predicted to lose coverage, and
 did. Neither shape meets the coverage condition, so neither qualifies and the
