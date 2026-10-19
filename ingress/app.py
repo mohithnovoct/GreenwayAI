@@ -13,12 +13,20 @@ from urllib.parse import urlparse
 import httpx
 from fastapi import FastAPI, Header, Request
 from fastapi.responses import JSONResponse, Response
+from redis.asyncio import Redis
 
 from carbon.carbon_engine import CarbonEngine
 from ingress.mock_backend import mock_response
 from ingress.normalization import build_gateway_request, count_tokens
 from optimizers.prompt_optimizer import optimize_gateway_request, should_optimize
-from optimizers.semantic_cache import DEFAULT_MODEL_REVISION, SentenceTransformerEmbedder
+from optimizers.semantic_cache import (
+    DEFAULT_CACHE_TENANT_NAMESPACE,
+    DEFAULT_CACHE_TTL_SECONDS,
+    DEFAULT_MODEL_REVISION,
+    ExactResponseCache,
+    SentenceTransformerEmbedder,
+    exact_request_is_eligible,
+)
 from telemetry.energy_model import estimate_energy_kwh
 from telemetry.nvml_sampler import NVMLPowerSampler
 from telemetry.parametric import ParametricEnergyEstimator
@@ -30,6 +38,8 @@ logger = logging.getLogger("greenwayai.ingress")
 @asynccontextmanager
 async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     application.state.semantic_embedder = None
+    application.state.redis_client = None
+    application.state.exact_cache = None
     if os.getenv("CACHE_ENABLED", "false").strip().lower() == "true":
         application.state.semantic_embedder = SentenceTransformerEmbedder(
             model_id=os.getenv(
@@ -39,6 +49,20 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
             revision=os.getenv(
                 "CACHE_EMBEDDING_MODEL_REVISION",
                 DEFAULT_MODEL_REVISION,
+            ),
+        )
+        application.state.redis_client = Redis.from_url(
+            os.getenv("REDIS_URL", "redis://redis:6379/0"),
+            decode_responses=False,
+        )
+        application.state.exact_cache = ExactResponseCache(
+            application.state.redis_client,
+            tenant_namespace=os.getenv(
+                "CACHE_TENANT_NAMESPACE",
+                DEFAULT_CACHE_TENANT_NAMESPACE,
+            ),
+            ttl_seconds=int(
+                os.getenv("CACHE_TTL_SECONDS", str(DEFAULT_CACHE_TTL_SECONDS))
             ),
         )
     application.state.executor = ThreadPoolExecutor(max_workers=50, thread_name_prefix="greenway-ingress")
@@ -65,6 +89,8 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         application.state.nvml_sampler.stop()
         await application.state.carbon_engine.close()
         await application.state.http_client.aclose()
+        if application.state.redis_client is not None:
+            await application.state.redis_client.aclose()
         application.state.executor.shutdown(wait=True)
 
 
@@ -162,6 +188,21 @@ async def chat_completions(
         return JSONResponse({"error": {"message": str(error)}}, status_code=503, headers=metadata)
     if backend_model:
         gateway_request.raw_payload["model"] = backend_model
+    exact_cache = getattr(request.app.state, "exact_cache", None)
+    cached_response = None
+    cache_status = "disabled"
+    if exact_cache is not None and backend_url:
+        if exact_request_is_eligible(gateway_request.raw_payload):
+            cache_status = "miss"
+            cached_response = await exact_cache.get(
+                gateway_request.raw_payload,
+                backend_identity=backend_url,
+            )
+            if cached_response is not None:
+                cache_status = "exact_hit"
+        else:
+            cache_status = "bypass"
+    metadata["X-Greenway-Cache"] = cache_status
     proxy_started = time.perf_counter()
     pool_acquire_ms = 0.0
     round_trip_ms = 0.0
@@ -187,8 +228,17 @@ async def chat_completions(
         telemetry_source = "parametric_estimated"
     elif sampler is not None:
         telemetry_source = sampler.telemetry_source
+    if cached_response is not None:
+        telemetry_source = "cache_hit"
     try:
-        if not backend_url:
+        if cached_response is not None:
+            response_payload = json.loads(cached_response.body.decode("utf-8"))
+            response = Response(
+                content=cached_response.body,
+                status_code=cached_response.status_code,
+                headers={**metadata, "Content-Type": "application/json"},
+            )
+        elif not backend_url:
             response_payload = mock_response(gateway_request.raw_payload)
             response = JSONResponse(response_payload, headers=metadata)
         else:
@@ -251,6 +301,13 @@ async def chat_completions(
                 status_code=backend_response.status_code,
                 headers=response_headers,
             )
+            if exact_cache is not None and cache_status == "miss":
+                await exact_cache.set(
+                    gateway_request.raw_payload,
+                    backend_response.status_code,
+                    response_body,
+                    backend_identity=backend_url,
+                )
     except httpx.HTTPError as error:
         response = JSONResponse({"error": {"message": f"Backend unavailable: {error}"}}, status_code=502, headers=metadata)
 
@@ -310,7 +367,7 @@ async def chat_completions(
             if reported_input_tokens is None and reported_output_tokens is None
             else "mixed"
         )
-        if parametric_mode and parametric_estimator is not None:
+        if parametric_mode and parametric_estimator is not None and cached_response is None:
             estimate = parametric_estimator.estimate(
                 model=str(gateway_request.raw_payload.get("model", "unknown")),
                 input_tokens=input_tokens,
@@ -358,6 +415,8 @@ async def chat_completions(
             "input_tokens": input_tokens,
             "prompt_optimization_arm": optimization_arm,
             "token_count_source": token_count_source,
+            "cache_status": cache_status,
+            "cache_tier": "exact" if cache_status == "exact_hit" else "none",
             **({
                 "original_prompt": original_prompt,
                 "optimized_prompt": optimized_prompt,

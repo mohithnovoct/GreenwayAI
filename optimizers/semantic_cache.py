@@ -1,9 +1,167 @@
+import hashlib
+import json
 import logging
+import math
+from dataclasses import dataclass
 from typing import Any
+
+from redis.asyncio import Redis
+from redis.exceptions import RedisError
 
 
 logger = logging.getLogger("greenwayai.semantic_cache")
 DEFAULT_MODEL_REVISION = "1110a243fdf4706b3f48f1d95db1a4f5529b4d41"
+DEFAULT_CACHE_TTL_SECONDS = 3600
+DEFAULT_CACHE_TENANT_NAMESPACE = "greenwayai-single-tenant"
+
+
+def exact_cache_key(
+    payload: dict[str, Any],
+    tenant_namespace: str,
+    backend_identity: str,
+) -> str:
+    namespace = tenant_namespace.strip()
+    if not namespace:
+        raise ValueError("Cache tenant namespace must not be empty")
+    canonical_payload = json.dumps(
+        {"backend_identity": backend_identity, "request": payload},
+        ensure_ascii=False,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    namespace_hash = hashlib.sha256(namespace.encode("utf-8")).hexdigest()
+    request_hash = hashlib.sha256(canonical_payload.encode("utf-8")).hexdigest()
+    return f"greenwayai:cache:v1:{namespace_hash}:exact:{request_hash}"
+
+
+def exact_request_is_eligible(payload: dict[str, Any]) -> bool:
+    if payload.get("stream", False):
+        return False
+    temperature = payload.get("temperature", 1.0)
+    if (
+        isinstance(temperature, bool)
+        or not isinstance(temperature, (int, float))
+        or not math.isfinite(temperature)
+        or temperature != 0
+    ):
+        return False
+    choices = payload.get("n", 1)
+    if isinstance(choices, bool) or not isinstance(choices, int) or choices != 1:
+        return False
+    if any(field in payload for field in ("tools", "tool_choice", "functions", "function_call")):
+        return False
+    return True
+
+
+def exact_response_is_eligible(status_code: int, payload: dict[str, Any]) -> bool:
+    if not 200 <= status_code < 300:
+        return False
+    choices = payload.get("choices")
+    if not isinstance(choices, list) or len(choices) != 1:
+        return False
+    choice = choices[0]
+    if not isinstance(choice, dict) or choice.get("finish_reason") != "stop":
+        return False
+    message = choice.get("message")
+    if not isinstance(message, dict):
+        return False
+    if message.get("tool_calls") or message.get("function_call") or message.get("refusal"):
+        return False
+    return True
+
+
+@dataclass(frozen=True)
+class CachedResponse:
+    status_code: int
+    body: bytes
+
+
+class ExactResponseCache:
+    def __init__(
+        self,
+        redis: Redis,
+        tenant_namespace: str = DEFAULT_CACHE_TENANT_NAMESPACE,
+        ttl_seconds: int = DEFAULT_CACHE_TTL_SECONDS,
+    ) -> None:
+        if ttl_seconds <= 0:
+            raise ValueError("Cache TTL must be a positive number of seconds")
+        exact_cache_key({}, tenant_namespace, "")
+        self._redis = redis
+        self._tenant_namespace = tenant_namespace
+        self._ttl_seconds = ttl_seconds
+
+    async def get(
+        self,
+        request_payload: dict[str, Any],
+        backend_identity: str,
+    ) -> CachedResponse | None:
+        if not exact_request_is_eligible(request_payload):
+            return None
+        key = exact_cache_key(
+            request_payload,
+            self._tenant_namespace,
+            backend_identity,
+        )
+        try:
+            stored = await self._redis.get(key)
+        except RedisError as error:
+            logger.warning("Exact cache lookup failed; bypassing cache: %s", error)
+            return None
+        if stored is None:
+            return None
+        try:
+            entry = json.loads(stored)
+            status_code = entry["status_code"]
+            body = entry["body"]
+            response_payload = json.loads(body)
+        except (UnicodeDecodeError, json.JSONDecodeError, KeyError, TypeError):
+            logger.warning("Ignoring malformed exact cache entry")
+            return None
+        if (
+            not isinstance(entry, dict)
+            or isinstance(status_code, bool)
+            or not isinstance(status_code, int)
+            or not isinstance(body, str)
+            or not isinstance(response_payload, dict)
+            or not exact_response_is_eligible(status_code, response_payload)
+        ):
+            logger.warning("Ignoring ineligible exact cache entry")
+            return None
+        return CachedResponse(status_code=status_code, body=body.encode("utf-8"))
+
+    async def set(
+        self,
+        request_payload: dict[str, Any],
+        status_code: int,
+        response_body: bytes,
+        backend_identity: str,
+    ) -> bool:
+        if not exact_request_is_eligible(request_payload):
+            return False
+        try:
+            body = response_body.decode("utf-8")
+            response_payload = json.loads(body)
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return False
+        if not isinstance(response_payload, dict) or not exact_response_is_eligible(status_code, response_payload):
+            return False
+        entry = json.dumps(
+            {"status_code": status_code, "body": body},
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        key = exact_cache_key(
+            request_payload,
+            self._tenant_namespace,
+            backend_identity,
+        )
+        try:
+            await self._redis.set(key, entry, ex=self._ttl_seconds)
+        except RedisError as error:
+            logger.warning("Exact cache write failed; continuing without cache: %s", error)
+            return False
+        return True
 
 
 class SentenceTransformerEmbedder:

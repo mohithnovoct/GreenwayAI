@@ -832,8 +832,29 @@ the existing Starlette/httpx `BlockingPortal` deprecation.
 
 ### Phase 4 follow-up design constraints
 
-The cache implementation and load tests remain gated tasks. For Task 3,
-embedding calls must use a dedicated two-worker executor, separate from the
+Task 2 exact-tier policy: use
+`greenwayai:cache:v1:<namespace-sha256>:exact:<request-sha256>`. The request
+digest covers sorted canonical JSON for the full effective request after
+backend model selection plus the backend endpoint identity, so messages,
+model, endpoint, and every supplied generation/output parameter participate;
+request IDs and transport metadata do not. The namespace is
+deployment-configured and hashed in the key; caller
+headers are not treated as tenant identity. The initial namespace is
+`greenwayai-single-tenant`, explicitly assuming one trusted deployment tenant.
+The default TTL is 3,600 seconds. Only non-streaming, single-choice,
+tool/function-free requests with `temperature=0` are lookup-eligible. Store
+only successful 2xx JSON responses with one assistant choice ending in
+`finish_reason=stop` and no tool call or refusal. Redis errors fail open to the
+backend. This exact tier performs no similarity search; semantic matching is a
+separate later tier.
+The gateway now performs exact lookup before backend inference and stores only
+responses passing that policy. Exact hits return the saved response with a new
+gateway request ID; the response body remains provider-originated. A hit does
+not receive a remote-inference energy estimate, so its energy and carbon
+headers/log values are null rather than billed as another provider generation.
+
+The semantic-tier implementation and load tests remain gated tasks. For Task
+3, embedding calls must use a dedicated two-worker executor, separate from the
 gateway's 50-worker default executor, and PyTorch intra-op and inter-op thread
 counts must each be explicitly set to 2 before model work begins. Task 5 must
 measure embedding latency at concurrency 10 and 50 and report p50/p95 for each;
