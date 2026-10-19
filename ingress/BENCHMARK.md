@@ -733,3 +733,27 @@ were captured immediately before each batch.
 | 18 | disabled -> enabled | load=1.88, mem=12749.4 MiB | 19.48 | load=1.88, mem=12748.9 MiB | 20.73 |
 | 19 | enabled -> disabled | load=1.88, mem=12757.2 MiB | 24.73 | load=1.88, mem=12757.6 MiB | 21.50 |
 | 20 | disabled -> enabled | load=1.88, mem=12759.8 MiB | 23.30 | load=1.88, mem=12757.6 MiB | 22.28 |
+
+## Phase 4 pre-flight: embedding latency
+
+Before measuring, the preregistered workload is one cold model load followed
+by 5 warm-up embeddings and 100 sequential measured prompts. The exact prompt
+template and runner are in
+[`verify/benchmark_semantic_embedding.py`](../verify/benchmark_semantic_embedding.py).
+Each generated prompt must be 90-110 tokens according to the selected model's
+tokenizer; otherwise the runner refuses to produce latency results. Each
+measured embedding call is timed end-to-end through `asyncio.to_thread`.
+Report all 100 durations and nearest-rank p50/p95; there is no pass/fail
+latency threshold because this is a cost characterization, not a cache
+correctness decision. The benchmark container is limited to 2 CPUs and
+PyTorch intra-op/inter-op threads are each set to 2. Capture host load
+immediately before this batch.
+
+The selected model is `sentence-transformers/all-MiniLM-L6-v2`, pinned to
+revision `1110a243fdf4706b3f48f1d95db1a4f5529b4d41`. Its Hugging Face model
+card lists Apache-2.0; the `model.safetensors` artifact is 90,868,376 bytes
+(approximately 86.6 MiB), excluding the small tokenizer/config files. The
+gateway loads the model during startup only when `CACHE_ENABLED=true`, and
+logs the model ID, revision, dimensions, and CPU device before serving
+requests. The stack image selected for vector search is pinned to
+`redis/redis-stack-server:7.4.0-v2`.
