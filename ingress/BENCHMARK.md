@@ -468,8 +468,9 @@ not hold at the same cap:
 
 Sensitivity, holding the final resolutions above fixed: under the original
 `example` criterion requiring an explicit successful operation followed by a
-lost/unreceived response, samples 2 and 3 would not satisfy `example`, giving
-focused-explanation means of 5/5 baseline and 3/5 optimized. If instead only
+lost/unreceived response, optimized sample 2 would change from 4/5 to 3/5;
+optimized sample 3 already scores `example` NO and remains 4/5. The resulting
+focused-explanation means are 5/5 baseline and 3.5/5 optimized. If instead only
 sample 8 `monitoring_signal` were scored NO, the how-to means would be 6.5/7
 baseline and 6/7 optimized. These are counterfactual checks; the final scores
 and rule application above continue to use the relaxed, preregistered rubric
@@ -845,8 +846,21 @@ The default TTL is 3,600 seconds. Only non-streaming, single-choice,
 tool/function-free requests with `temperature=0` are lookup-eligible. Store
 only successful 2xx JSON responses with one assistant choice ending in
 `finish_reason=stop` and no tool call or refusal. Redis errors fail open to the
-backend. This exact tier performs no similarity search; semantic matching is a
-separate later tier.
+backend. `X-Greenway-Cache-Bypass: true` skips both lookup and storage.
+`X-Greenway-Cache-Tier` and the `cache_tier` telemetry attribute report one of
+`exact`, `miss`, `bypass`, or `unavailable`. This exact tier performs no
+similarity search; semantic matching is a separate later tier.
+The cache is shared among every caller of one gateway deployment. This is
+unsafe for multi-tenant deployments because one caller could receive another
+caller's cached content. A multi-tenant deployment must authenticate callers
+and have trusted authentication middleware set
+`request.state.authenticated_tenant_id`; the optional tenant key component is
+empty unless that state value is present. The gateway never derives tenant
+identity from a request header. Cache keys include the optimizer arm and hash
+the effective request after prompt optimization, preventing optimized and
+baseline entries from sharing a key. Cached response bodies are plaintext user
+content in Redis for up to 3,600 seconds; protect the Redis network and storage
+accordingly.
 The gateway now performs exact lookup before backend inference and stores only
 responses passing that policy. Exact hits return the saved response with a new
 gateway request ID; the response body remains provider-originated. A hit does
@@ -859,4 +873,9 @@ gateway's 50-worker default executor, and PyTorch intra-op and inter-op thread
 counts must each be explicitly set to 2 before model work begins. Task 5 must
 measure embedding latency at concurrency 10 and 50 and report p50/p95 for each;
 the sequential Task 1 measurement is not a substitute for those concurrent
-measurements.
+measurements. Compose exposes Redis only on the private service network
+(`expose: 6379`, no host `ports` mapping), with `maxmemory=256mb` and
+`maxmemory-policy=allkeys-lru`. Authentication is disabled by default for this
+isolated development network; operators must configure `REDIS_PASSWORD`, add
+the corresponding `--requirepass` to `REDIS_ARGS`, and set credentials in
+`REDIS_URL` before using a shared or externally reachable Redis service.

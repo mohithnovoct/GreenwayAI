@@ -43,12 +43,25 @@ def register_baseline_metrics() -> dict[str, Any]:
     return metrics_state
 
 
-def record_request_metrics(metrics_state: dict[str, Any], *, energy_kwh: float | None, carbon_gco2e: float | None, telemetry_source: str, energy_source_tier: str, carbon_source_tier: str) -> None:
-    metrics_state["request_counter"].add(1, {"telemetry_source": telemetry_source})
+def record_request_metrics(
+    metrics_state: dict[str, Any],
+    *,
+    energy_kwh: float | None,
+    carbon_gco2e: float | None,
+    telemetry_source: str,
+    energy_source_tier: str,
+    carbon_source_tier: str,
+    cache_tier: str = "bypass",
+) -> None:
+    metrics_state["request_counter"].add(
+        1,
+        {"telemetry_source": telemetry_source, "cache_tier": cache_tier},
+    )
     attributes = {
         "telemetry_source": telemetry_source,
         "energy_source_tier": energy_source_tier,
         "carbon_source_tier": carbon_source_tier,
+        "cache_tier": cache_tier,
     }
     if energy_kwh is not None:
         metrics_state["energy_histogram"].record(energy_kwh, attributes)

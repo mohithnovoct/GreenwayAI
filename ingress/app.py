@@ -23,8 +23,11 @@ from optimizers.semantic_cache import (
     DEFAULT_CACHE_TENANT_NAMESPACE,
     DEFAULT_CACHE_TTL_SECONDS,
     DEFAULT_MODEL_REVISION,
+    CachedResponse,
     ExactResponseCache,
     SentenceTransformerEmbedder,
+    exact_response_is_eligible,
+    exact_response_token_counts,
     exact_request_is_eligible,
 )
 from telemetry.energy_model import estimate_energy_kwh
@@ -153,6 +156,7 @@ def dashboard() -> Response:
 async def chat_completions(
     request: Request,
     x_greenway_sla: str | None = Header(default=None),
+    x_greenway_cache_bypass: str | None = Header(default=None, alias="X-Greenway-Cache-Bypass"),
 ) -> Response:
     started = time.perf_counter()
     payload = await request.json()
@@ -181,28 +185,63 @@ async def chat_completions(
         "X-Greenway-Input-Tokens": str(gateway_request.input_tokens),
         "X-Greenway-Prompt-Optimization": optimization_arm,
         "X-Greenway-Prompt-Optimization-Changes": ",".join(optimization_changes),
+        "X-Greenway-Cache-Tier": "bypass",
     }
     try:
         backend_url, backend_model, backend_headers, remote_backend = backend_configuration()
     except RuntimeError as error:
+        logger.info(json.dumps({
+            "request_id": gateway_request.request_id,
+            "cache_tier": "bypass",
+            "error": str(error),
+        }))
+        record_request_metrics(
+            request.app.state.metrics,
+            energy_kwh=None,
+            carbon_gco2e=None,
+            telemetry_source="unknown",
+            energy_source_tier="unavailable",
+            carbon_source_tier="unavailable",
+            cache_tier="bypass",
+        )
         return JSONResponse({"error": {"message": str(error)}}, status_code=503, headers=metadata)
     if backend_model:
         gateway_request.raw_payload["model"] = backend_model
     exact_cache = getattr(request.app.state, "exact_cache", None)
     cached_response = None
-    cache_status = "disabled"
-    if exact_cache is not None and backend_url:
+    flight = None
+    cache_tier = "bypass"
+    tenant_id = getattr(request.state, "authenticated_tenant_id", "")
+    if not isinstance(tenant_id, str):
+        tenant_id = ""
+    bypass_cache = (x_greenway_cache_bypass or "").strip().lower() in {"1", "true", "yes"}
+    if exact_cache is not None and backend_url and not bypass_cache:
         if exact_request_is_eligible(gateway_request.raw_payload):
-            cache_status = "miss"
-            cached_response = await exact_cache.get(
+            lookup = await exact_cache.lookup(
                 gateway_request.raw_payload,
                 backend_identity=backend_url,
+                optimizer_arm=optimization_arm,
+                tenant_id=tenant_id,
             )
-            if cached_response is not None:
-                cache_status = "exact_hit"
+            if not lookup.available:
+                cache_tier = "unavailable"
+            elif lookup.response is not None:
+                cache_tier = "exact"
+                cached_response = lookup.response
+            else:
+                cache_tier = "miss"
+                flight, coalesced_response = await exact_cache.begin_singleflight(
+                    gateway_request.raw_payload,
+                    backend_identity=backend_url,
+                    optimizer_arm=optimization_arm,
+                    tenant_id=tenant_id,
+                )
+                if coalesced_response is not None:
+                    cached_response = coalesced_response
+                    cache_tier = "exact"
         else:
-            cache_status = "bypass"
-    metadata["X-Greenway-Cache"] = cache_status
+            cache_tier = "bypass"
+    metadata["X-Greenway-Cache-Tier"] = cache_tier
     proxy_started = time.perf_counter()
     pool_acquire_ms = 0.0
     round_trip_ms = 0.0
@@ -218,6 +257,8 @@ async def chat_completions(
     hardware_energy_kwh: float | None = None
     energy_source_tier = "unavailable"
     response_payload: dict[str, Any] = {}
+    response_body_for_cache: bytes | None = None
+    flight_response: CachedResponse | None = None
     sampler = getattr(request.app.state, "nvml_sampler", None)
     parametric_estimator = getattr(request.app.state, "parametric_estimator", None)
     parametric_mode = bool(backend_url) and (
@@ -274,6 +315,7 @@ async def chat_completions(
             round_trip_ms = (time.perf_counter() - trace_started) * 1000 - pool_acquire_ms
             response_body_started = time.perf_counter()
             response_body = await backend_response.aread()
+            response_body_for_cache = response_body
             response_read_ms = (time.perf_counter() - response_body_started) * 1000
             await backend_response.aclose()
             if sampler is not None and not parametric_mode:
@@ -301,15 +343,11 @@ async def chat_completions(
                 status_code=backend_response.status_code,
                 headers=response_headers,
             )
-            if exact_cache is not None and cache_status == "miss":
-                await exact_cache.set(
-                    gateway_request.raw_payload,
-                    backend_response.status_code,
-                    response_body,
-                    backend_identity=backend_url,
-                )
     except httpx.HTTPError as error:
         response = JSONResponse({"error": {"message": f"Backend unavailable: {error}"}}, status_code=502, headers=metadata)
+        if flight is not None:
+            await exact_cache.finish_singleflight(flight, None)
+            flight = None
 
     def _reported_usage(payload: dict[str, Any]) -> tuple[int | None, int | None, int | None]:
         usage = payload.get("usage")
@@ -367,6 +405,48 @@ async def chat_completions(
             if reported_input_tokens is None and reported_output_tokens is None
             else "mixed"
         )
+        if cached_response is not None:
+            input_tokens = cached_response.original_input_tokens
+            decode_tokens = cached_response.decode_tokens
+            output_tokens_hidden = max(0, decode_tokens - output_tokens)
+        elif flight is not None and response_body_for_cache is not None:
+            response_is_cacheable = exact_response_is_eligible(
+                response.status_code,
+                response_payload,
+            )
+            if response_is_cacheable:
+                original_input_tokens, saved_decode_tokens = exact_response_token_counts(
+                    response_payload,
+                    estimated_input_tokens,
+                    decode_tokens,
+                )
+                stored = await exact_cache.set(
+                    gateway_request.raw_payload,
+                    response.status_code,
+                    response_body_for_cache,
+                    backend_identity=backend_url,
+                    optimizer_arm=optimization_arm,
+                    original_input_tokens=original_input_tokens,
+                    decode_tokens=saved_decode_tokens,
+                    tenant_id=tenant_id,
+                )
+                if stored:
+                    flight_response = CachedResponse(
+                        status_code=response.status_code,
+                        body=response_body_for_cache,
+                        original_input_tokens=original_input_tokens,
+                        decode_tokens=saved_decode_tokens,
+                    )
+                else:
+                    cache_tier = "unavailable"
+                    flight_response = CachedResponse(
+                        status_code=response.status_code,
+                        body=response_body_for_cache,
+                        original_input_tokens=original_input_tokens,
+                        decode_tokens=saved_decode_tokens,
+                    )
+            await exact_cache.finish_singleflight(flight, flight_response)
+            flight = None
         if parametric_mode and parametric_estimator is not None and cached_response is None:
             estimate = parametric_estimator.estimate(
                 model=str(gateway_request.raw_payload.get("model", "unknown")),
@@ -415,8 +495,7 @@ async def chat_completions(
             "input_tokens": input_tokens,
             "prompt_optimization_arm": optimization_arm,
             "token_count_source": token_count_source,
-            "cache_status": cache_status,
-            "cache_tier": "exact" if cache_status == "exact_hit" else "none",
+            "cache_tier": cache_tier,
             **({
                 "original_prompt": original_prompt,
                 "optimized_prompt": optimized_prompt,
@@ -448,6 +527,7 @@ async def chat_completions(
             telemetry_source=telemetry_source,
             energy_source_tier=energy_source_tier,
             carbon_source_tier=carbon_source_tier,
+            cache_tier=cache_tier,
         )
         request.app.state.dashboard_points.append({
             "request_id": gateway_request.request_id,
@@ -460,4 +540,27 @@ async def chat_completions(
         del request.app.state.dashboard_points[:-100]
     else:
         proxy_ms = (time.perf_counter() - proxy_started) * 1000
+        logger.info(json.dumps({
+            "request_id": gateway_request.request_id,
+            "content_hash": gateway_request.content_hash,
+            "prompt_optimization_arm": optimization_arm,
+            "cache_tier": cache_tier,
+            "telemetry_source": telemetry_source,
+            "energy_source_tier": energy_source_tier,
+            "carbon_source_tier": carbon_source_tier,
+            "energy_kwh": None,
+            "carbon_gco2e": None,
+        }))
+        record_request_metrics(
+            request.app.state.metrics,
+            energy_kwh=None,
+            carbon_gco2e=None,
+            telemetry_source=telemetry_source,
+            energy_source_tier=energy_source_tier,
+            carbon_source_tier=carbon_source_tier,
+            cache_tier=cache_tier,
+        )
+    if flight is not None:
+        await exact_cache.finish_singleflight(flight, None)
+    response.headers["X-Greenway-Cache-Tier"] = cache_tier
     return response

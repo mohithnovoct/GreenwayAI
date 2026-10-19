@@ -2,6 +2,7 @@ import hashlib
 import json
 import logging
 import math
+import asyncio
 from dataclasses import dataclass
 from typing import Any
 
@@ -19,12 +20,19 @@ def exact_cache_key(
     payload: dict[str, Any],
     tenant_namespace: str,
     backend_identity: str,
+    optimizer_arm: str = "baseline",
+    tenant_id: str = "",
 ) -> str:
     namespace = tenant_namespace.strip()
     if not namespace:
         raise ValueError("Cache tenant namespace must not be empty")
     canonical_payload = json.dumps(
-        {"backend_identity": backend_identity, "request": payload},
+        {
+            "backend_identity": backend_identity,
+            "optimizer_arm": optimizer_arm,
+            "request": payload,
+            "tenant_id": tenant_id,
+        },
         ensure_ascii=False,
         allow_nan=False,
         sort_keys=True,
@@ -54,6 +62,31 @@ def exact_request_is_eligible(payload: dict[str, Any]) -> bool:
     return True
 
 
+def exact_response_token_counts(
+    response_payload: dict[str, Any],
+    fallback_input_tokens: int,
+    fallback_decode_tokens: int,
+) -> tuple[int, int]:
+    usage = response_payload.get("usage")
+    if not isinstance(usage, dict):
+        return fallback_input_tokens, fallback_decode_tokens
+    prompt_tokens = usage.get("prompt_tokens")
+    completion_tokens = usage.get("completion_tokens")
+    total_tokens = usage.get("total_tokens")
+    if (
+        isinstance(prompt_tokens, bool)
+        or not isinstance(prompt_tokens, int)
+        or prompt_tokens <= 0
+        or isinstance(completion_tokens, bool)
+        or not isinstance(completion_tokens, int)
+        or completion_tokens <= 0
+    ):
+        return fallback_input_tokens, fallback_decode_tokens
+    if isinstance(total_tokens, bool) or not isinstance(total_tokens, int) or total_tokens < 0:
+        return prompt_tokens, completion_tokens
+    return prompt_tokens, max(completion_tokens, total_tokens - prompt_tokens)
+
+
 def exact_response_is_eligible(status_code: int, payload: dict[str, Any]) -> bool:
     if not 200 <= status_code < 300:
         return False
@@ -75,6 +108,20 @@ def exact_response_is_eligible(status_code: int, payload: dict[str, Any]) -> boo
 class CachedResponse:
     status_code: int
     body: bytes
+    original_input_tokens: int
+    decode_tokens: int
+
+
+@dataclass(frozen=True)
+class CacheLookup:
+    response: CachedResponse | None
+    available: bool
+
+
+@dataclass(frozen=True)
+class SingleFlight:
+    key: str
+    future: asyncio.Future[CachedResponse | None]
 
 
 class ExactResponseCache:
@@ -90,45 +137,117 @@ class ExactResponseCache:
         self._redis = redis
         self._tenant_namespace = tenant_namespace
         self._ttl_seconds = ttl_seconds
+        self._inflight: dict[str, asyncio.Future[CachedResponse | None]] = {}
+        self._inflight_guard = asyncio.Lock()
 
-    async def get(
+    async def lookup(
         self,
         request_payload: dict[str, Any],
         backend_identity: str,
-    ) -> CachedResponse | None:
+        optimizer_arm: str,
+        tenant_id: str = "",
+    ) -> CacheLookup:
         if not exact_request_is_eligible(request_payload):
-            return None
+            return CacheLookup(response=None, available=True)
         key = exact_cache_key(
             request_payload,
             self._tenant_namespace,
             backend_identity,
+            optimizer_arm,
+            tenant_id,
         )
         try:
             stored = await self._redis.get(key)
         except RedisError as error:
             logger.warning("Exact cache lookup failed; bypassing cache: %s", error)
-            return None
+            return CacheLookup(response=None, available=False)
         if stored is None:
-            return None
+            return CacheLookup(response=None, available=True)
         try:
             entry = json.loads(stored)
             status_code = entry["status_code"]
             body = entry["body"]
+            original_input_tokens = entry["original_input_tokens"]
+            decode_tokens = entry["decode_tokens"]
             response_payload = json.loads(body)
         except (UnicodeDecodeError, json.JSONDecodeError, KeyError, TypeError):
             logger.warning("Ignoring malformed exact cache entry")
-            return None
+            return CacheLookup(response=None, available=True)
         if (
             not isinstance(entry, dict)
             or isinstance(status_code, bool)
             or not isinstance(status_code, int)
             or not isinstance(body, str)
+            or isinstance(original_input_tokens, bool)
+            or not isinstance(original_input_tokens, int)
+            or isinstance(decode_tokens, bool)
+            or not isinstance(decode_tokens, int)
             or not isinstance(response_payload, dict)
             or not exact_response_is_eligible(status_code, response_payload)
         ):
             logger.warning("Ignoring ineligible exact cache entry")
-            return None
-        return CachedResponse(status_code=status_code, body=body.encode("utf-8"))
+            return CacheLookup(response=None, available=True)
+        return CacheLookup(
+            response=CachedResponse(
+                status_code=status_code,
+                body=body.encode("utf-8"),
+                original_input_tokens=original_input_tokens,
+                decode_tokens=decode_tokens,
+            ),
+            available=True,
+        )
+
+    async def get(
+        self,
+        request_payload: dict[str, Any],
+        backend_identity: str,
+        optimizer_arm: str = "baseline",
+        tenant_id: str = "",
+    ) -> CachedResponse | None:
+        return (
+            await self.lookup(
+                request_payload,
+                backend_identity,
+                optimizer_arm,
+                tenant_id,
+            )
+        ).response
+
+    async def begin_singleflight(
+        self,
+        request_payload: dict[str, Any],
+        backend_identity: str,
+        optimizer_arm: str,
+        tenant_id: str = "",
+    ) -> tuple[SingleFlight | None, CachedResponse | None]:
+        key = exact_cache_key(
+            request_payload,
+            self._tenant_namespace,
+            backend_identity,
+            optimizer_arm,
+            tenant_id,
+        )
+        while True:
+            async with self._inflight_guard:
+                future = self._inflight.get(key)
+                if future is None:
+                    future = asyncio.get_running_loop().create_future()
+                    self._inflight[key] = future
+                    return SingleFlight(key=key, future=future), None
+            response = await asyncio.shield(future)
+            if response is not None:
+                return None, response
+
+    async def finish_singleflight(
+        self,
+        flight: SingleFlight,
+        response: CachedResponse | None,
+    ) -> None:
+        async with self._inflight_guard:
+            if self._inflight.get(flight.key) is flight.future:
+                del self._inflight[flight.key]
+            if not flight.future.done():
+                flight.future.set_result(response)
 
     async def set(
         self,
@@ -136,6 +255,10 @@ class ExactResponseCache:
         status_code: int,
         response_body: bytes,
         backend_identity: str,
+        optimizer_arm: str,
+        original_input_tokens: int,
+        decode_tokens: int,
+        tenant_id: str = "",
     ) -> bool:
         if not exact_request_is_eligible(request_payload):
             return False
@@ -147,7 +270,12 @@ class ExactResponseCache:
         if not isinstance(response_payload, dict) or not exact_response_is_eligible(status_code, response_payload):
             return False
         entry = json.dumps(
-            {"status_code": status_code, "body": body},
+            {
+                "status_code": status_code,
+                "body": body,
+                "original_input_tokens": original_input_tokens,
+                "decode_tokens": decode_tokens,
+            },
             ensure_ascii=False,
             separators=(",", ":"),
         )
@@ -155,6 +283,8 @@ class ExactResponseCache:
             request_payload,
             self._tenant_namespace,
             backend_identity,
+            optimizer_arm,
+            tenant_id,
         )
         try:
             await self._redis.set(key, entry, ex=self._ttl_seconds)
