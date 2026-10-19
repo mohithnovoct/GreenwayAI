@@ -58,7 +58,6 @@ services:
     ports:
       - "8002:8000"
     depends_on:
-      # Private-network only; auth is disabled unless REDIS_ARGS includes --requirepass.
       redis:
         condition: service_healthy
       mock-backend:
@@ -79,6 +78,7 @@ services:
       timeout: 3s
       retries: 5
 
+  # Private-network only; auth is disabled unless REDIS_ARGS includes --requirepass.
   redis:
     image: redis/redis-stack-server:7.4.0-v2
     expose:
