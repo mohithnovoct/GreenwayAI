@@ -23,12 +23,15 @@ from optimizers.semantic_cache import (
     DEFAULT_CACHE_TENANT_NAMESPACE,
     DEFAULT_CACHE_TTL_SECONDS,
     DEFAULT_MODEL_REVISION,
+    DEFAULT_SEMANTIC_CACHE_TIMEOUT_MS,
     CachedResponse,
     ExactResponseCache,
+    SemanticResponseCache,
     SentenceTransformerEmbedder,
     exact_response_is_eligible,
     exact_response_token_counts,
     exact_request_is_eligible,
+    semantic_embedding_text,
 )
 from telemetry.energy_model import estimate_energy_kwh
 from telemetry.nvml_sampler import NVMLPowerSampler
@@ -40,10 +43,53 @@ logger = logging.getLogger("greenwayai.ingress")
 
 @asynccontextmanager
 async def lifespan(application: FastAPI) -> AsyncIterator[None]:
+    exact_enabled = os.getenv("CACHE_ENABLED", "false").strip().lower() == "true"
+    semantic_enabled = os.getenv("SEMANTIC_CACHE_ENABLED", "false").strip().lower() == "true"
     application.state.semantic_embedder = None
+    application.state.semantic_cache = None
+    application.state.embedding_executor = None
+    application.state.semantic_cache_enabled = semantic_enabled
+    application.state.exact_cache_enabled = exact_enabled
     application.state.redis_client = None
     application.state.exact_cache = None
-    if os.getenv("CACHE_ENABLED", "false").strip().lower() == "true":
+    namespace = os.getenv(
+        "CACHE_TENANT_NAMESPACE",
+        DEFAULT_CACHE_TENANT_NAMESPACE,
+    )
+    ttl_seconds = int(os.getenv("CACHE_TTL_SECONDS", str(DEFAULT_CACHE_TTL_SECONDS)))
+    threshold_value: float | None = None
+    timeout_ms = DEFAULT_SEMANTIC_CACHE_TIMEOUT_MS
+    if semantic_enabled:
+        threshold_text = os.getenv("SEMANTIC_CACHE_SIMILARITY_THRESHOLD", "").strip()
+        if not threshold_text:
+            raise RuntimeError(
+                "SEMANTIC_CACHE_SIMILARITY_THRESHOLD is required when "
+                "SEMANTIC_CACHE_ENABLED=true"
+            )
+        threshold_value = float(threshold_text)
+        if not 0.0 <= threshold_value <= 1.0:
+            raise ValueError("Semantic similarity threshold must be between 0 and 1")
+        timeout_ms = int(
+            os.getenv(
+                "SEMANTIC_CACHE_EMBED_TIMEOUT_MS",
+                str(DEFAULT_SEMANTIC_CACHE_TIMEOUT_MS),
+            )
+        )
+        if timeout_ms <= 0:
+            raise ValueError("SEMANTIC_CACHE_EMBED_TIMEOUT_MS must be positive")
+    if exact_enabled or semantic_enabled:
+        redis_client = Redis.from_url(
+            os.getenv("REDIS_URL", "redis://redis:6379/0"),
+            decode_responses=False,
+        )
+        application.state.redis_client = redis_client
+        application.state.exact_cache = ExactResponseCache(
+            redis_client,
+            tenant_namespace=namespace,
+            ttl_seconds=ttl_seconds,
+        )
+    if semantic_enabled:
+        assert threshold_value is not None
         application.state.semantic_embedder = SentenceTransformerEmbedder(
             model_id=os.getenv(
                 "CACHE_EMBEDDING_MODEL_ID",
@@ -54,20 +100,20 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
                 DEFAULT_MODEL_REVISION,
             ),
         )
-        application.state.redis_client = Redis.from_url(
-            os.getenv("REDIS_URL", "redis://redis:6379/0"),
-            decode_responses=False,
+        application.state.embedding_executor = ThreadPoolExecutor(
+            max_workers=2,
+            thread_name_prefix="greenway-semantic-embedding",
         )
-        application.state.exact_cache = ExactResponseCache(
+        application.state.semantic_embedding_timeout = timeout_ms / 1000
+        application.state.semantic_cache = SemanticResponseCache(
             application.state.redis_client,
-            tenant_namespace=os.getenv(
-                "CACHE_TENANT_NAMESPACE",
-                DEFAULT_CACHE_TENANT_NAMESPACE,
-            ),
-            ttl_seconds=int(
-                os.getenv("CACHE_TTL_SECONDS", str(DEFAULT_CACHE_TTL_SECONDS))
-            ),
+            tenant_namespace=namespace,
+            model_revision=application.state.semantic_embedder.revision,
+            dimension=application.state.semantic_embedder.dimension,
+            similarity_threshold=threshold_value,
+            ttl_seconds=ttl_seconds,
         )
+        await application.state.semantic_cache.create_index()
     application.state.executor = ThreadPoolExecutor(max_workers=50, thread_name_prefix="greenway-ingress")
     asyncio.get_running_loop().set_default_executor(application.state.executor)
     application.state.http_client = httpx.AsyncClient(
@@ -94,12 +140,36 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         await application.state.http_client.aclose()
         if application.state.redis_client is not None:
             await application.state.redis_client.aclose()
+        if application.state.embedding_executor is not None:
+            application.state.embedding_executor.shutdown(wait=True)
         application.state.executor.shutdown(wait=True)
 
 
 app = FastAPI(title="GreenwayAI Gateway", version="0.2.0", lifespan=lifespan)
 
 GEMINI_BACKEND_URL = "https://generativelanguage.googleapis.com/v1beta/openai"
+
+
+async def embed_semantic_text(request: Request, text: str) -> tuple[list[float] | None, bool]:
+    embedder = request.app.state.semantic_embedder
+    executor = request.app.state.embedding_executor
+    embedding_future = asyncio.get_running_loop().run_in_executor(
+        executor,
+        embedder.encode,
+        text,
+    )
+    try:
+        embedding = await asyncio.wait_for(
+            embedding_future,
+            timeout=request.app.state.semantic_embedding_timeout,
+        )
+    except TimeoutError:
+        logger.warning("Semantic embedding exceeded its request timeout")
+        return None, False
+    except Exception as error:
+        logger.warning("Semantic embedding failed; bypassing cache: %s", error)
+        return None, False
+    return embedding, True
 
 
 def is_remote_backend_url(backend_url: str) -> bool:
@@ -208,28 +278,64 @@ async def chat_completions(
     if backend_model:
         gateway_request.raw_payload["model"] = backend_model
     exact_cache = getattr(request.app.state, "exact_cache", None)
+    exact_enabled = bool(getattr(request.app.state, "exact_cache_enabled", False))
+    semantic_cache = getattr(request.app.state, "semantic_cache", None)
     cached_response = None
+    semantic_embedding: list[float] | None = None
+    semantic_similarity: float | None = None
+    cache_unavailable = False
     flight = None
     cache_tier = "bypass"
     tenant_id = getattr(request.state, "authenticated_tenant_id", "")
     if not isinstance(tenant_id, str):
         tenant_id = ""
     bypass_cache = (x_greenway_cache_bypass or "").strip().lower() in {"1", "true", "yes"}
-    if exact_cache is not None and backend_url and not bypass_cache:
+    cache_active = (exact_enabled or semantic_cache is not None) and exact_cache is not None
+    if cache_active and backend_url and not bypass_cache:
         if exact_request_is_eligible(gateway_request.raw_payload):
-            lookup = await exact_cache.lookup(
-                gateway_request.raw_payload,
-                backend_identity=backend_url,
-                optimizer_arm=optimization_arm,
-                tenant_id=tenant_id,
-            )
-            if not lookup.available:
-                cache_tier = "unavailable"
-            elif lookup.response is not None:
-                cache_tier = "exact"
-                cached_response = lookup.response
-            else:
-                cache_tier = "miss"
+            cache_tier = "miss"
+            if exact_enabled:
+                lookup = await exact_cache.lookup(
+                    gateway_request.raw_payload,
+                    backend_identity=backend_url,
+                    optimizer_arm=optimization_arm,
+                    tenant_id=tenant_id,
+                )
+                if not lookup.available:
+                    cache_unavailable = True
+                elif lookup.response is not None:
+                    cache_tier = "exact"
+                    cached_response = lookup.response
+            if (
+                cached_response is None
+                and semantic_cache is not None
+                and not cache_unavailable
+            ):
+                text = semantic_embedding_text(gateway_request.raw_payload)
+                if text is not None:
+                    semantic_embedding, embedding_available = await embed_semantic_text(
+                        request,
+                        text,
+                    )
+                    if not embedding_available:
+                        cache_unavailable = True
+                    elif semantic_embedding is not None:
+                        semantic_lookup = await semantic_cache.lookup(
+                            gateway_request.raw_payload,
+                            backend_identity=backend_url,
+                            optimizer_arm=optimization_arm,
+                            tenant_id=tenant_id,
+                            embedding=semantic_embedding,
+                        )
+                        if not semantic_lookup.available:
+                            cache_unavailable = True
+                        elif semantic_lookup.response is not None:
+                            cached_response = semantic_lookup.response
+                            semantic_similarity = semantic_lookup.similarity
+                            cache_tier = "semantic"
+            if cached_response is None:
+                if cache_unavailable:
+                    cache_tier = "unavailable"
                 flight, coalesced_response = await exact_cache.begin_singleflight(
                     gateway_request.raw_payload,
                     backend_identity=backend_url,
@@ -420,31 +526,44 @@ async def chat_completions(
                     estimated_input_tokens,
                     decode_tokens,
                 )
-                stored = await exact_cache.set(
-                    gateway_request.raw_payload,
-                    response.status_code,
-                    response_body_for_cache,
-                    backend_identity=backend_url,
-                    optimizer_arm=optimization_arm,
+                flight_response = CachedResponse(
+                    status_code=response.status_code,
+                    body=response_body_for_cache,
                     original_input_tokens=original_input_tokens,
                     decode_tokens=saved_decode_tokens,
-                    tenant_id=tenant_id,
                 )
-                if stored:
-                    flight_response = CachedResponse(
-                        status_code=response.status_code,
-                        body=response_body_for_cache,
+                if exact_enabled:
+                    stored_exact = await exact_cache.set(
+                        gateway_request.raw_payload,
+                        response.status_code,
+                        response_body_for_cache,
+                        backend_identity=backend_url,
+                        optimizer_arm=optimization_arm,
                         original_input_tokens=original_input_tokens,
                         decode_tokens=saved_decode_tokens,
+                        tenant_id=tenant_id,
                     )
-                else:
+                    if not stored_exact:
+                        cache_unavailable = True
+                if (
+                    semantic_cache is not None
+                    and semantic_embedding is not None
+                ):
+                    stored_semantic = await semantic_cache.set(
+                        gateway_request.raw_payload,
+                        response.status_code,
+                        response_body_for_cache,
+                        backend_identity=backend_url,
+                        optimizer_arm=optimization_arm,
+                        tenant_id=tenant_id,
+                        original_input_tokens=original_input_tokens,
+                        decode_tokens=saved_decode_tokens,
+                        embedding=semantic_embedding,
+                    )
+                    if not stored_semantic:
+                        cache_unavailable = True
+                if cache_unavailable:
                     cache_tier = "unavailable"
-                    flight_response = CachedResponse(
-                        status_code=response.status_code,
-                        body=response_body_for_cache,
-                        original_input_tokens=original_input_tokens,
-                        decode_tokens=saved_decode_tokens,
-                    )
             await exact_cache.finish_singleflight(flight, flight_response)
             flight = None
         if parametric_mode and parametric_estimator is not None and cached_response is None:
@@ -496,6 +615,11 @@ async def chat_completions(
             "prompt_optimization_arm": optimization_arm,
             "token_count_source": token_count_source,
             "cache_tier": cache_tier,
+            **(
+                {"semantic_similarity": round(semantic_similarity, 6)}
+                if semantic_similarity is not None
+                else {}
+            ),
             **({
                 "original_prompt": original_prompt,
                 "optimized_prompt": optimized_prompt,

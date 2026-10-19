@@ -849,12 +849,12 @@ headers are not treated as tenant identity. The initial namespace is
 `greenwayai-single-tenant`, explicitly assuming one trusted deployment tenant.
 The default TTL is 3,600 seconds. Only non-streaming, single-choice,
 tool/function-free requests with `temperature=0` are lookup-eligible. Store
-only successful 2xx JSON responses with one assistant choice ending in
+only HTTP 200 JSON responses with one assistant choice ending in
 `finish_reason=stop` and no tool call or refusal. Redis errors fail open to the
 backend. `X-Greenway-Cache-Bypass: true` skips both lookup and storage.
 `X-Greenway-Cache-Tier` and the `cache_tier` telemetry attribute report one of
-`exact`, `miss`, `bypass`, or `unavailable`. This exact tier performs no
-similarity search; semantic matching is a separate later tier.
+`exact`, `semantic`, `miss`, `bypass`, or `unavailable`. Lookup order is exact,
+then semantic, then backend. Semantic hits log their cosine similarity.
 The cache is shared among every caller of one gateway deployment. This is
 unsafe for multi-tenant deployments because one caller could receive another
 caller's cached content. A multi-tenant deployment must authenticate callers
@@ -872,10 +872,22 @@ gateway request ID; the response body remains provider-originated. A hit does
 not receive a remote-inference energy estimate, so its energy and carbon
 headers/log values are null rather than billed as another provider generation.
 
-The semantic-tier implementation and load tests remain gated tasks. For Task
-3, embedding calls must use a dedicated two-worker executor, separate from the
-gateway's 50-worker default executor, and PyTorch intra-op and inter-op thread
-counts must each be explicitly set to 2 before model work begins. Task 5 must
+Semantic caching is implemented but remains disabled by default with
+`SEMANTIC_CACHE_ENABLED=false`. Enabling it requires an explicit
+`SEMANTIC_CACHE_SIMILARITY_THRESHOLD`; no production threshold is selected
+until Task 4 validates one. Embeddings use only the final user message's text.
+This isolates semantic similarity to the latest user question while the
+system prompt, every prior turn, final-message metadata, model, endpoint,
+optimizer arm, authenticated tenant scope, and all other request parameters
+must match exactly. Their SHA-256 tags are applied inside the RediSearch KNN
+query, before nearest-neighbor selection, never as a Python post-filter.
+Embedding timeouts default to 100 ms and are configurable with
+`SEMANTIC_CACHE_EMBED_TIMEOUT_MS`; timeouts, embedding failures, and Redis
+errors fail open to the backend and label the request `unavailable`. Embedding
+uses a dedicated two-worker executor, separate from the gateway's
+50-worker executor, with PyTorch intra-op and inter-op thread counts set to 2.
+The index is created idempotently at startup, uses the loaded model's
+dimension, and is versioned by the embedding model revision. Task 5 must
 measure embedding latency at concurrency 10 and 50 and report p50/p95 for each;
 the sequential Task 1 measurement is not a substitute for those concurrent
 measurements. Compose exposes Redis only on the private service network
