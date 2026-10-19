@@ -468,13 +468,18 @@ not hold at the same cap:
 
 Sensitivity, holding the final resolutions above fixed: under the original
 `example` criterion requiring an explicit successful operation followed by a
-lost/unreceived response, optimized sample 2 would change from 4/5 to 3/5;
-optimized sample 3 already scores `example` NO and remains 4/5. The resulting
-focused-explanation means are 5/5 baseline and 3.5/5 optimized. If instead only
-sample 8 `monitoring_signal` were scored NO, the how-to means would be 6.5/7
-baseline and 6/7 optimized. These are counterfactual checks; the final scores
-and rule application above continue to use the relaxed, preregistered rubric
-and the adjudicated YES for sample 8.
+lost/unreceived response, optimized sample 2 remains 3/5. Its `definition` and
+`retry_vs_duplicate` items are NO; its example says the payment processor
+confirms success before a network timeout, then describes the duplicate charge
+without a key and reuse of the key preventing it. Optimized sample 3 becomes
+4/5: its other four items are YES, but its example says the network times out
+without explicitly stating that the first operation succeeded and its response
+was not received. The sensitivity mean is therefore 3.5/5 (3/5 and 4/5),
+not 3/5 for both samples. If instead only sample 8 `monitoring_signal` were
+scored NO, the how-to means would be 6.5/7 baseline and 6/7 optimized. These
+are counterfactual checks; the final scores and rule application above
+continue to use the relaxed, preregistered rubric and the adjudicated YES for
+sample 8.
 
 The predictions were mixed: focused explanation was predicted to preserve
 coverage, but it scored lower; the how-to was predicted to lose coverage, and
