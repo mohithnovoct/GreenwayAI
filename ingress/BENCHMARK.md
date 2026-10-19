@@ -762,3 +762,61 @@ gateway loads the model during startup only when `CACHE_ENABLED=true`, and
 logs the model ID, revision, dimensions, and CPU device before serving
 requests. The stack image selected for vector search is pinned to
 `redis/redis-stack-server:7.4.0-v2`.
+
+### Task 1 pre-flight results (2026-10-19)
+
+The original Compose image, `redis:7-alpine`, did not include vector search.
+Raw command replies:
+
+```text
+FT._LIST:
+ERR unknown command 'FT._LIST', with args beginning with:
+FT.CREATE gw_phase4_control ON HASH PREFIX 1 gw-phase4-control: SCHEMA embedding VECTOR HNSW 6 TYPE FLOAT32 DIM 384 DISTANCE_METRIC COSINE:
+ERR unknown command 'FT.CREATE', with args beginning with: 'gw_phase4_control' 'ON' 'HASH' 'PREFIX' '1' 'gw-phase4-control:' 'SCHEMA' 'embedding' 'VECTOR' 'HNSW' '6' 'TYPE' 'FLOAT32' 'DIM'
+```
+
+Compose now pins `redis/redis-stack-server:7.4.0-v2`
+(`redis_version:7.4.2`,
+`redis/redis-stack-server@sha256:df62866294f7fab407fa1b88b9c1eceb53d2b99c571196ec2de621b166107858`).
+The throwaway control then passed and was removed:
+
+```text
+FT._LIST before:
+(empty)
+FT.CREATE:
+OK
+FT._LIST after:
+gw_phase4_control
+FT.DROPINDEX:
+OK
+```
+
+The selected model card identifies the license as Apache-2.0. Its default
+`model.safetensors` artifact is 90,868,376 bytes (86.6 MiB); tokenizer and
+configuration files add a small amount. The model card is
+[`all-MiniLM-L6-v2`](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2),
+and the model artifact list is available from the
+[Hugging Face model API](https://huggingface.co/api/models/sentence-transformers/all-MiniLM-L6-v2/tree/main?recursive=true&expand=true).
+
+Actual gateway startup with `CACHE_ENABLED=true` logged:
+
+```text
+semantic embedding model loading model_id=sentence-transformers/all-MiniLM-L6-v2 revision=1110a243fdf4706b3f48f1d95db1a4f5529b4d41 device=cpu
+semantic embedding model loaded model_id=sentence-transformers/all-MiniLM-L6-v2 revision=1110a243fdf4706b3f48f1d95db1a4f5529b4d41 dimensions=384 device=cpu
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+```
+
+`GET /health` returned HTTP 200 after startup. The latency run used
+`--cpus=2`, with two PyTorch intra-op and inter-op threads. Immediately before
+the batch, Windows host CPU total was 15.95% at
+`2026-10-19T10:41:02.9807046+05:30`; there were five warm-up calls followed by
+100 measured prompts of 104-105 model tokens (mean 104.97), each executed via
+`asyncio.to_thread`. Raw per-call timings and run metadata are committed in
+[`verify/phase4_embedding_benchmark_results.json`](../verify/phase4_embedding_benchmark_results.json).
+Nearest-rank p50 was **29.764186 ms** and p95 was **34.756024 ms**. This is
+the CPU embedding cost only; it excludes Redis search and is not cache hit
+latency.
+
+The full suite at this gate reported `67 passed, 1 warning`. The warning was
+the existing Starlette/httpx `BlockingPortal` deprecation.
