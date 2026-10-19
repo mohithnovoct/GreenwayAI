@@ -16,7 +16,7 @@ def test_embedder_normalizes_model_output_to_float_list(monkeypatch):
             calls["revision"] = revision
             calls["device"] = device
 
-        def get_sentence_embedding_dimension(self):
+        def get_embedding_dimension(self):
             return 3
 
         def encode(self, text, **kwargs):

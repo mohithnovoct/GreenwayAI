@@ -302,7 +302,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.9,<3.0" },
     { name = "pynvml", specifier = ">=11.5,<12.0" },
     { name = "python-dotenv", specifier = ">=1.0,<2.0" },
-    { name = "sentence-transformers", specifier = ">=5.1,<6.0" },
+    { name = "sentence-transformers", specifier = ">=5.7,<6.0" },
     { name = "tiktoken", specifier = ">=0.8,<1.0" },
     { name = "torch", specifier = "==2.14.1+cpu", index = "https://download.pytorch.org/whl/cpu" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30,<1.0" },

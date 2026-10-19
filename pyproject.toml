@@ -14,7 +14,7 @@ dependencies = [
     "opentelemetry-api>=1.31,<2.0",
     "opentelemetry-sdk>=1.31,<2.0",
     "opentelemetry-exporter-otlp>=1.31,<2.0",
-    "sentence-transformers>=5.1,<6.0",
+    "sentence-transformers>=5.7,<6.0",
     "torch==2.14.1+cpu",
 ]
 

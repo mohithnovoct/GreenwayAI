@@ -28,7 +28,7 @@ class SentenceTransformerEmbedder:
         )
         self.model_id = model_id
         self.revision = revision
-        self.dimension = self._model.get_sentence_embedding_dimension()
+        self.dimension = self._model.get_embedding_dimension()
         if not self.dimension:
             raise RuntimeError(f"Embedding model {model_id!r} did not report its dimension")
         logger.info(
