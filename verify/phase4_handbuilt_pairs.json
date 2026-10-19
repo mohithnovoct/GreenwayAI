@@ -1,0 +1,805 @@
+{
+ "description": "Hand-built LLM-style prompt pairs. label=1: one stored answer would be fully acceptable for both prompts. label=0: a stored answer to one would be wrong or misleading for the other. Split alternates within each (label, category) group, fixed before any scoring.",
+ "pairs": [
+  {
+   "id": "hbp01",
+   "label": 1,
+   "category": "coding",
+   "a": "Write a Python function that checks whether a number is prime.",
+   "b": "Create a Python function to test if a number is prime.",
+   "split": "dev"
+  },
+  {
+   "id": "hbp02",
+   "label": 1,
+   "category": "coding",
+   "a": "How do I reverse a string in Python?",
+   "b": "What is the way to reverse a string in Python?",
+   "split": "test"
+  },
+  {
+   "id": "hbp03",
+   "label": 1,
+   "category": "coding",
+   "a": "Show me how to read a CSV file with pandas.",
+   "b": "How can I load a CSV file using pandas?",
+   "split": "dev"
+  },
+  {
+   "id": "hbp04",
+   "label": 1,
+   "category": "coding",
+   "a": "What is the difference between a list and a tuple in Python?",
+   "b": "How do lists and tuples differ in Python?",
+   "split": "test"
+  },
+  {
+   "id": "hbp05",
+   "label": 1,
+   "category": "coding",
+   "a": "Write a SQL query to find the second highest salary from an Employee table.",
+   "b": "Give me a SQL query that returns the second highest salary in the Employee table.",
+   "split": "dev"
+  },
+  {
+   "id": "hbp06",
+   "label": 1,
+   "category": "coding",
+   "a": "How do I remove duplicates from a list in Python?",
+   "b": "What is a way to deduplicate a list in Python?",
+   "split": "test"
+  },
+  {
+   "id": "hbp07",
+   "label": 1,
+   "category": "coding",
+   "a": "Explain what a closure is in JavaScript.",
+   "b": "What is a closure in JavaScript? Please explain.",
+   "split": "dev"
+  },
+  {
+   "id": "hbp08",
+   "label": 1,
+   "category": "coding",
+   "a": "How do I undo the last git commit but keep my changes?",
+   "b": "What command undoes my last git commit while keeping the changes?",
+   "split": "test"
+  },
+  {
+   "id": "hbp09",
+   "label": 1,
+   "category": "coding",
+   "a": "Write a regular expression that matches an email address.",
+   "b": "Give me a regex that matches email addresses.",
+   "split": "dev"
+  },
+  {
+   "id": "hbp10",
+   "label": 1,
+   "category": "coding",
+   "a": "How do I sort a dictionary by value in Python?",
+   "b": "What is the way to sort a Python dict by its values?",
+   "split": "test"
+  },
+  {
+   "id": "hbp11",
+   "label": 1,
+   "category": "explanation",
+   "a": "What is the capital of Australia?",
+   "b": "Which city is the capital of Australia?",
+   "split": "dev"
+  },
+  {
+   "id": "hbp12",
+   "label": 1,
+   "category": "explanation",
+   "a": "Explain how photosynthesis works.",
+   "b": "How does photosynthesis work?",
+   "split": "test"
+  },
+  {
+   "id": "hbp13",
+   "label": 1,
+   "category": "explanation",
+   "a": "What causes the seasons on Earth?",
+   "b": "Why does Earth have seasons?",
+   "split": "dev"
+  },
+  {
+   "id": "hbp14",
+   "label": 1,
+   "category": "explanation",
+   "a": "What is inflation in economics?",
+   "b": "Can you define inflation in economic terms?",
+   "split": "test"
+  },
+  {
+   "id": "hbp15",
+   "label": 1,
+   "category": "explanation",
+   "a": "Explain the difference between weather and climate.",
+   "b": "How is weather different from climate?",
+   "split": "dev"
+  },
+  {
+   "id": "hbp16",
+   "label": 1,
+   "category": "explanation",
+   "a": "What is machine learning?",
+   "b": "Can you explain what machine learning is?",
+   "split": "test"
+  },
+  {
+   "id": "hbp17",
+   "label": 1,
+   "category": "explanation",
+   "a": "Why is the sky blue?",
+   "b": "What makes the sky look blue?",
+   "split": "dev"
+  },
+  {
+   "id": "hbp18",
+   "label": 1,
+   "category": "explanation",
+   "a": "What does HTTP status code 404 mean?",
+   "b": "What is the meaning of the 404 HTTP status code?",
+   "split": "test"
+  },
+  {
+   "id": "hbp19",
+   "label": 1,
+   "category": "explanation",
+   "a": "How does a vaccine work?",
+   "b": "Explain how vaccines work.",
+   "split": "dev"
+  },
+  {
+   "id": "hbp20",
+   "label": 1,
+   "category": "explanation",
+   "a": "What is the time complexity of binary search?",
+   "b": "In big-O terms, what is the time complexity of binary search?",
+   "split": "test"
+  },
+  {
+   "id": "hbp21",
+   "label": 1,
+   "category": "how_to",
+   "a": "How do I convert Celsius to Fahrenheit?",
+   "b": "What is the formula to change Celsius into Fahrenheit?",
+   "split": "dev"
+  },
+  {
+   "id": "hbp22",
+   "label": 1,
+   "category": "how_to",
+   "a": "How can I improve my resume?",
+   "b": "What can I do to make my resume better?",
+   "split": "test"
+  },
+  {
+   "id": "hbp23",
+   "label": 1,
+   "category": "how_to",
+   "a": "How do I make a cup of green tea?",
+   "b": "What are the steps to brew green tea?",
+   "split": "dev"
+  },
+  {
+   "id": "hbp24",
+   "label": 1,
+   "category": "how_to",
+   "a": "How do I center a div in CSS?",
+   "b": "What is the way to center a div using CSS?",
+   "split": "test"
+  },
+  {
+   "id": "hbp25",
+   "label": 1,
+   "category": "how_to",
+   "a": "How do I set up a Python virtual environment?",
+   "b": "What are the steps to create a virtual environment in Python?",
+   "split": "dev"
+  },
+  {
+   "id": "hbp26",
+   "label": 1,
+   "category": "how_to",
+   "a": "How do I write a good cover letter?",
+   "b": "What is the way to write a good cover letter?",
+   "split": "test"
+  },
+  {
+   "id": "hbp27",
+   "label": 1,
+   "category": "how_to",
+   "a": "How can I reduce my screen time?",
+   "b": "What are some ways to cut down on screen time?",
+   "split": "dev"
+  },
+  {
+   "id": "hbp28",
+   "label": 1,
+   "category": "how_to",
+   "a": "How do I change a flat tire?",
+   "b": "What are the steps for changing a flat tire?",
+   "split": "test"
+  },
+  {
+   "id": "hbp29",
+   "label": 1,
+   "category": "how_to",
+   "a": "How do I install Docker on Ubuntu?",
+   "b": "What are the steps to install Docker on an Ubuntu machine?",
+   "split": "dev"
+  },
+  {
+   "id": "hbp30",
+   "label": 1,
+   "category": "how_to",
+   "a": "How do I back up my iPhone?",
+   "b": "What is the process for backing up an iPhone?",
+   "split": "test"
+  },
+  {
+   "id": "hbp31",
+   "label": 1,
+   "category": "task",
+   "a": "Summarize the plot of Romeo and Juliet in three sentences.",
+   "b": "Give a three-sentence summary of Romeo and Juliet's plot.",
+   "split": "dev"
+  },
+  {
+   "id": "hbp32",
+   "label": 1,
+   "category": "task",
+   "a": "Translate 'good morning' into Spanish.",
+   "b": "How do you say 'good morning' in Spanish?",
+   "split": "test"
+  },
+  {
+   "id": "hbp33",
+   "label": 1,
+   "category": "task",
+   "a": "Write a haiku about autumn.",
+   "b": "Compose a haiku about the autumn season.",
+   "split": "dev"
+  },
+  {
+   "id": "hbp34",
+   "label": 1,
+   "category": "task",
+   "a": "Give me three tips for a job interview.",
+   "b": "What are three tips for succeeding in a job interview?",
+   "split": "test"
+  },
+  {
+   "id": "hbp35",
+   "label": 1,
+   "category": "task",
+   "a": "List the planets of the solar system in order from the sun.",
+   "b": "What are the planets in our solar system, ordered from the sun outward?",
+   "split": "dev"
+  },
+  {
+   "id": "hbp36",
+   "label": 1,
+   "category": "task",
+   "a": "Write a one-paragraph product description for a stainless steel water bottle.",
+   "b": "Write a short paragraph describing a stainless steel water bottle for a product page.",
+   "split": "test"
+  },
+  {
+   "id": "hbp37",
+   "label": 1,
+   "category": "task",
+   "a": "What is the boiling point of water at sea level in Celsius?",
+   "b": "At sea level, at what Celsius temperature does water boil?",
+   "split": "dev"
+  },
+  {
+   "id": "hbp38",
+   "label": 1,
+   "category": "task",
+   "a": "Convert 5 kilometers to miles.",
+   "b": "How many miles is 5 kilometers?",
+   "split": "test"
+  },
+  {
+   "id": "hbp39",
+   "label": 1,
+   "category": "task",
+   "a": "Explain the rules of tic-tac-toe.",
+   "b": "How do you play tic-tac-toe? Explain the rules.",
+   "split": "dev"
+  },
+  {
+   "id": "hbp40",
+   "label": 1,
+   "category": "task",
+   "a": "Who wrote Pride and Prejudice?",
+   "b": "Which author wrote Pride and Prejudice?",
+   "split": "test"
+  },
+  {
+   "id": "hbn01",
+   "label": 0,
+   "category": "negation",
+   "a": "Write a Python function that returns True if a number is prime.",
+   "b": "Write a Python function that returns True if a number is not prime.",
+   "split": "dev"
+  },
+  {
+   "id": "hbn02",
+   "label": 0,
+   "category": "negation",
+   "a": "Which HTTP methods are idempotent?",
+   "b": "Which HTTP methods are not idempotent?",
+   "split": "test"
+  },
+  {
+   "id": "hbn03",
+   "label": 0,
+   "category": "negation",
+   "a": "Explain when you should use recursion.",
+   "b": "Explain when you should not use recursion.",
+   "split": "dev"
+  },
+  {
+   "id": "hbn04",
+   "label": 0,
+   "category": "negation",
+   "a": "Give me reasons to adopt microservices.",
+   "b": "Give me reasons not to adopt microservices.",
+   "split": "test"
+  },
+  {
+   "id": "hbn05",
+   "label": 0,
+   "category": "negation",
+   "a": "What should I do if my code compiles?",
+   "b": "What should I do if my code does not compile?",
+   "split": "dev"
+  },
+  {
+   "id": "hbn06",
+   "label": 0,
+   "category": "negation",
+   "a": "How do I enable dark mode in VS Code?",
+   "b": "How do I disable dark mode in VS Code?",
+   "split": "test"
+  },
+  {
+   "id": "hbn07",
+   "label": 0,
+   "category": "negation",
+   "a": "Is it safe to run this command as root?",
+   "b": "Is it unsafe to run this command as root?",
+   "split": "dev"
+  },
+  {
+   "id": "hbn08",
+   "label": 0,
+   "category": "negation",
+   "a": "Write a regex that matches strings containing digits.",
+   "b": "Write a regex that matches strings containing no digits.",
+   "split": "test"
+  },
+  {
+   "id": "hbn09",
+   "label": 0,
+   "category": "number_unit",
+   "a": "Convert 5 kilometers to miles.",
+   "b": "Convert 50 kilometers to miles.",
+   "split": "dev"
+  },
+  {
+   "id": "hbn10",
+   "label": 0,
+   "category": "number_unit",
+   "a": "Write a loop that prints the numbers 1 to 10.",
+   "b": "Write a loop that prints the numbers 1 to 100.",
+   "split": "test"
+  },
+  {
+   "id": "hbn11",
+   "label": 0,
+   "category": "number_unit",
+   "a": "Summarize this in 3 bullet points.",
+   "b": "Summarize this in 5 bullet points.",
+   "split": "dev"
+  },
+  {
+   "id": "hbn12",
+   "label": 0,
+   "category": "number_unit",
+   "a": "What is 15% of 200?",
+   "b": "What is 25% of 200?",
+   "split": "test"
+  },
+  {
+   "id": "hbn13",
+   "label": 0,
+   "category": "number_unit",
+   "a": "How many seconds are in 2 hours?",
+   "b": "How many seconds are in 3 hours?",
+   "split": "dev"
+  },
+  {
+   "id": "hbn14",
+   "label": 0,
+   "category": "number_unit",
+   "a": "Convert 100 degrees Celsius to Fahrenheit.",
+   "b": "Convert 100 degrees Fahrenheit to Celsius.",
+   "split": "test"
+  },
+  {
+   "id": "hbn15",
+   "label": 0,
+   "category": "number_unit",
+   "a": "Give me a 7-day meal plan.",
+   "b": "Give me a 30-day meal plan.",
+   "split": "dev"
+  },
+  {
+   "id": "hbn16",
+   "label": 0,
+   "category": "number_unit",
+   "a": "Write a function to compute the 10th Fibonacci number.",
+   "b": "Write a function to compute the 20th Fibonacci number.",
+   "split": "test"
+  },
+  {
+   "id": "hbn17",
+   "label": 0,
+   "category": "number_unit",
+   "a": "What is the sum of the first 10 positive integers?",
+   "b": "What is the sum of the first 100 positive integers?",
+   "split": "dev"
+  },
+  {
+   "id": "hbn18",
+   "label": 0,
+   "category": "number_unit",
+   "a": "Convert 10 USD to euros.",
+   "b": "Convert 10 euros to USD.",
+   "split": "test"
+  },
+  {
+   "id": "hbn19",
+   "label": 0,
+   "category": "direction",
+   "a": "Sort this list in ascending order.",
+   "b": "Sort this list in descending order.",
+   "split": "dev"
+  },
+  {
+   "id": "hbn20",
+   "label": 0,
+   "category": "direction",
+   "a": "Write a SQL query ordering employees by salary from highest to lowest.",
+   "b": "Write a SQL query ordering employees by salary from lowest to highest.",
+   "split": "test"
+  },
+  {
+   "id": "hbn21",
+   "label": 0,
+   "category": "direction",
+   "a": "Convert this string from uppercase to lowercase.",
+   "b": "Convert this string from lowercase to uppercase.",
+   "split": "dev"
+  },
+  {
+   "id": "hbn22",
+   "label": 0,
+   "category": "direction",
+   "a": "Explain how to merge branch A into branch B in git.",
+   "b": "Explain how to merge branch B into branch A in git.",
+   "split": "test"
+  },
+  {
+   "id": "hbn23",
+   "label": 0,
+   "category": "direction",
+   "a": "Translate this sentence from English to French.",
+   "b": "Translate this sentence from French to English.",
+   "split": "dev"
+  },
+  {
+   "id": "hbn24",
+   "label": 0,
+   "category": "direction",
+   "a": "Rotate this array to the left by two positions.",
+   "b": "Rotate this array to the right by two positions.",
+   "split": "test"
+  },
+  {
+   "id": "hbn25",
+   "label": 0,
+   "category": "entity",
+   "a": "What is the capital of Australia?",
+   "b": "What is the capital of Austria?",
+   "split": "dev"
+  },
+  {
+   "id": "hbn26",
+   "label": 0,
+   "category": "entity",
+   "a": "Who wrote Pride and Prejudice?",
+   "b": "Who wrote Sense and Sensibility?",
+   "split": "test"
+  },
+  {
+   "id": "hbn27",
+   "label": 0,
+   "category": "entity",
+   "a": "What is the boiling point of water at sea level?",
+   "b": "What is the boiling point of ethanol at sea level?",
+   "split": "dev"
+  },
+  {
+   "id": "hbn28",
+   "label": 0,
+   "category": "entity",
+   "a": "Explain how photosynthesis works.",
+   "b": "Explain how cellular respiration works.",
+   "split": "test"
+  },
+  {
+   "id": "hbn29",
+   "label": 0,
+   "category": "entity",
+   "a": "How do I install Docker on Ubuntu?",
+   "b": "How do I install Docker on Windows?",
+   "split": "dev"
+  },
+  {
+   "id": "hbn30",
+   "label": 0,
+   "category": "entity",
+   "a": "What is the population of Canada?",
+   "b": "What is the population of Mexico?",
+   "split": "test"
+  },
+  {
+   "id": "hbn31",
+   "label": 0,
+   "category": "entity",
+   "a": "Summarize the plot of Romeo and Juliet.",
+   "b": "Summarize the plot of Hamlet.",
+   "split": "dev"
+  },
+  {
+   "id": "hbn32",
+   "label": 0,
+   "category": "entity",
+   "a": "What causes earthquakes?",
+   "b": "What causes volcanic eruptions?",
+   "split": "test"
+  },
+  {
+   "id": "hbn33",
+   "label": 0,
+   "category": "entity",
+   "a": "How do I back up my iPhone?",
+   "b": "How do I back up my Android phone?",
+   "split": "dev"
+  },
+  {
+   "id": "hbn34",
+   "label": 0,
+   "category": "entity",
+   "a": "What is the time complexity of binary search?",
+   "b": "What is the time complexity of quicksort?",
+   "split": "test"
+  },
+  {
+   "id": "hbn35",
+   "label": 0,
+   "category": "language_library",
+   "a": "Write a function to reverse a string in Python.",
+   "b": "Write a function to reverse a string in JavaScript.",
+   "split": "dev"
+  },
+  {
+   "id": "hbn36",
+   "label": 0,
+   "category": "language_library",
+   "a": "Read a CSV file with pandas.",
+   "b": "Read a CSV file with polars.",
+   "split": "test"
+  },
+  {
+   "id": "hbn37",
+   "label": 0,
+   "category": "language_library",
+   "a": "Write a Python 3 script to list files in a directory.",
+   "b": "Write a bash script to list files in a directory.",
+   "split": "dev"
+  },
+  {
+   "id": "hbn38",
+   "label": 0,
+   "category": "language_library",
+   "a": "How do I make an HTTP request in Python using requests?",
+   "b": "How do I make an HTTP request in Python using aiohttp?",
+   "split": "test"
+  },
+  {
+   "id": "hbn39",
+   "label": 0,
+   "category": "language_library",
+   "a": "Write a unit test using pytest.",
+   "b": "Write a unit test using unittest.",
+   "split": "dev"
+  },
+  {
+   "id": "hbn40",
+   "label": 0,
+   "category": "language_library",
+   "a": "Create a React component with hooks.",
+   "b": "Create a Vue component with the Composition API.",
+   "split": "test"
+  },
+  {
+   "id": "hbn41",
+   "label": 0,
+   "category": "language_library",
+   "a": "Sort a list in Java.",
+   "b": "Sort a list in Rust.",
+   "split": "dev"
+  },
+  {
+   "id": "hbn42",
+   "label": 0,
+   "category": "language_library",
+   "a": "How do I connect to PostgreSQL from Node.js?",
+   "b": "How do I connect to MySQL from Node.js?",
+   "split": "test"
+  },
+  {
+   "id": "hbn43",
+   "label": 0,
+   "category": "different_task",
+   "a": "Explain what a REST API is.",
+   "b": "Write a REST API in Flask.",
+   "split": "dev"
+  },
+  {
+   "id": "hbn44",
+   "label": 0,
+   "category": "different_task",
+   "a": "Summarize the plot of Romeo and Juliet.",
+   "b": "Write an essay arguing that Romeo and Juliet is not a love story.",
+   "split": "test"
+  },
+  {
+   "id": "hbn45",
+   "label": 0,
+   "category": "different_task",
+   "a": "What is machine learning?",
+   "b": "What are the best machine learning books for beginners?",
+   "split": "dev"
+  },
+  {
+   "id": "hbn46",
+   "label": 0,
+   "category": "different_task",
+   "a": "How do I write a good cover letter?",
+   "b": "Review my cover letter and suggest edits.",
+   "split": "test"
+  },
+  {
+   "id": "hbn47",
+   "label": 0,
+   "category": "different_task",
+   "a": "Explain recursion.",
+   "b": "Write a recursive function to compute factorial.",
+   "split": "dev"
+  },
+  {
+   "id": "hbn48",
+   "label": 0,
+   "category": "different_task",
+   "a": "What is Docker?",
+   "b": "How do I uninstall Docker?",
+   "split": "test"
+  },
+  {
+   "id": "hbn49",
+   "label": 0,
+   "category": "different_task",
+   "a": "Write a haiku about autumn.",
+   "b": "Write a haiku about winter.",
+   "split": "dev"
+  },
+  {
+   "id": "hbn50",
+   "label": 0,
+   "category": "different_task",
+   "a": "Give me three tips for a job interview.",
+   "b": "Give me three tips for a salary negotiation.",
+   "split": "test"
+  },
+  {
+   "id": "hbn51",
+   "label": 0,
+   "category": "different_task",
+   "a": "What is inflation?",
+   "b": "What is deflation?",
+   "split": "dev"
+  },
+  {
+   "id": "hbn52",
+   "label": 0,
+   "category": "different_task",
+   "a": "Translate 'good morning' into Spanish.",
+   "b": "Translate 'good night' into Spanish.",
+   "split": "test"
+  },
+  {
+   "id": "hbn53",
+   "label": 0,
+   "category": "near_miss",
+   "a": "How do I remove duplicates from a list in Python?",
+   "b": "How do I remove duplicates from a SQL query result?",
+   "split": "dev"
+  },
+  {
+   "id": "hbn54",
+   "label": 0,
+   "category": "near_miss",
+   "a": "How do I center a div in CSS?",
+   "b": "How do I center text in a Word document?",
+   "split": "test"
+  },
+  {
+   "id": "hbn55",
+   "label": 0,
+   "category": "near_miss",
+   "a": "How do I change a flat tire?",
+   "b": "How do I change my password in Gmail?",
+   "split": "dev"
+  },
+  {
+   "id": "hbn56",
+   "label": 0,
+   "category": "near_miss",
+   "a": "How do I make a cup of green tea?",
+   "b": "How do I make a cup of black coffee?",
+   "split": "test"
+  },
+  {
+   "id": "hbn57",
+   "label": 0,
+   "category": "near_miss",
+   "a": "What is the capital of Australia?",
+   "b": "What is the largest city in Australia?",
+   "split": "dev"
+  },
+  {
+   "id": "hbn58",
+   "label": 0,
+   "category": "near_miss",
+   "a": "Who was the first president of the United States?",
+   "b": "Who was the second president of the United States?",
+   "split": "test"
+  },
+  {
+   "id": "hbn59",
+   "label": 0,
+   "category": "near_miss",
+   "a": "What year did World War II end?",
+   "b": "What year did World War II start?",
+   "split": "dev"
+  },
+  {
+   "id": "hbn60",
+   "label": 0,
+   "category": "near_miss",
+   "a": "Is Python compiled or interpreted?",
+   "b": "Is Java compiled or interpreted?",
+   "split": "test"
+  }
+ ]
+}
