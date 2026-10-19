@@ -760,7 +760,16 @@ card lists Apache-2.0; the `model.safetensors` artifact is 90,868,376 bytes
 (approximately 86.6 MiB), excluding the small tokenizer/config files. The
 gateway loads the model during startup only when `CACHE_ENABLED=true`, and
 logs the model ID, revision, dimensions, and CPU device before serving
-requests. The stack image selected for vector search is pinned to
+requests. The RediSearch module bundled in
+`redis/redis-stack-server:7.4.0-v2` is distributed under Redis's pre-Redis-8
+source-available terms, RSALv2 or SSPLv1 (see the
+[RediSearch license](https://github.com/RediSearch/RediSearch/blob/master/LICENSE.txt)).
+Docker Hub reports that this image tag was last pushed on 2025-01-08, about
+649 days before this 2026-10-19 check
+([tag metadata](https://hub.docker.com/v2/repositories/redis/redis-stack-server/tags/7.4.0-v2)).
+Its age and source-available licensing make a newer image or alternative
+worth evaluating in a later review; this pre-flight does not switch images.
+The stack image selected for vector search is pinned to
 `redis/redis-stack-server:7.4.0-v2`.
 
 ### Task 1 pre-flight results (2026-10-19)
@@ -820,3 +829,13 @@ latency.
 
 The full suite at this gate reported `67 passed, 1 warning`. The warning was
 the existing Starlette/httpx `BlockingPortal` deprecation.
+
+### Phase 4 follow-up design constraints
+
+The cache implementation and load tests remain gated tasks. For Task 3,
+embedding calls must use a dedicated two-worker executor, separate from the
+gateway's 50-worker default executor, and PyTorch intra-op and inter-op thread
+counts must each be explicitly set to 2 before model work begins. Task 5 must
+measure embedding latency at concurrency 10 and 50 and report p50/p95 for each;
+the sequential Task 1 measurement is not a substitute for those concurrent
+measurements.
