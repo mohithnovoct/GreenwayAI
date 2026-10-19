@@ -10,6 +10,10 @@ COPY shared ./shared
 COPY telemetry ./telemetry
 COPY verify ./verify
 
+RUN pip install --no-cache-dir \
+    --index-url https://download.pytorch.org/whl/cpu \
+    --extra-index-url https://pypi.org/simple \
+    "torch==2.14.1+cpu"
 RUN pip install --no-cache-dir .
 
 EXPOSE 8000

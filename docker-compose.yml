@@ -17,6 +17,9 @@ services:
       PROMPT_OPT_AB_PERCENT: "100"
       PROMPT_OPT_WORD_CAP: ${PROMPT_OPT_WORD_CAP:-150}
       PROMPT_OPT_COMBINE_VARIATIONS: ${PROMPT_OPT_COMBINE_VARIATIONS:-false}
+      CACHE_ENABLED: ${CACHE_ENABLED:-false}
+      CACHE_EMBEDDING_MODEL_ID: ${CACHE_EMBEDDING_MODEL_ID:-sentence-transformers/all-MiniLM-L6-v2}
+      CACHE_EMBEDDING_MODEL_REVISION: ${CACHE_EMBEDDING_MODEL_REVISION:-1110a243fdf4706b3f48f1d95db1a4f5529b4d41}
     ports:
       - "8000:8000"
     depends_on:
@@ -43,6 +46,9 @@ services:
       PROMPT_OPT_AB_PERCENT: "100"
       PROMPT_OPT_WORD_CAP: ${PROMPT_OPT_WORD_CAP:-150}
       PROMPT_OPT_COMBINE_VARIATIONS: ${PROMPT_OPT_COMBINE_VARIATIONS:-false}
+      CACHE_ENABLED: ${CACHE_ENABLED:-false}
+      CACHE_EMBEDDING_MODEL_ID: ${CACHE_EMBEDDING_MODEL_ID:-sentence-transformers/all-MiniLM-L6-v2}
+      CACHE_EMBEDDING_MODEL_REVISION: ${CACHE_EMBEDDING_MODEL_REVISION:-1110a243fdf4706b3f48f1d95db1a4f5529b4d41}
     ports:
       - "8002:8000"
     depends_on:
@@ -67,7 +73,7 @@ services:
       retries: 5
 
   redis:
-    image: redis:7-alpine
+    image: redis/redis-stack-server:7.4.0-v2
     ports:
       - "6379:6379"
     healthcheck:

@@ -18,6 +18,7 @@ from carbon.carbon_engine import CarbonEngine
 from ingress.mock_backend import mock_response
 from ingress.normalization import build_gateway_request, count_tokens
 from optimizers.prompt_optimizer import optimize_gateway_request, should_optimize
+from optimizers.semantic_cache import DEFAULT_MODEL_REVISION, SentenceTransformerEmbedder
 from telemetry.energy_model import estimate_energy_kwh
 from telemetry.nvml_sampler import NVMLPowerSampler
 from telemetry.parametric import ParametricEnergyEstimator
@@ -28,6 +29,18 @@ logger = logging.getLogger("greenwayai.ingress")
 
 @asynccontextmanager
 async def lifespan(application: FastAPI) -> AsyncIterator[None]:
+    application.state.semantic_embedder = None
+    if os.getenv("CACHE_ENABLED", "false").strip().lower() == "true":
+        application.state.semantic_embedder = SentenceTransformerEmbedder(
+            model_id=os.getenv(
+                "CACHE_EMBEDDING_MODEL_ID",
+                "sentence-transformers/all-MiniLM-L6-v2",
+            ),
+            revision=os.getenv(
+                "CACHE_EMBEDDING_MODEL_REVISION",
+                DEFAULT_MODEL_REVISION,
+            ),
+        )
     application.state.executor = ThreadPoolExecutor(max_workers=50, thread_name_prefix="greenway-ingress")
     asyncio.get_running_loop().set_default_executor(application.state.executor)
     application.state.http_client = httpx.AsyncClient(
