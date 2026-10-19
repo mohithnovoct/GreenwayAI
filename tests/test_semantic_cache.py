@@ -567,7 +567,10 @@ def test_semantic_cache_hit_for_paraphrase_with_mock_embeddings(
     assert first.headers["x-greenway-cache-tier"] == "miss"
     assert second.headers["x-greenway-cache-tier"] == "semantic"
     assert second.content == first.content
-    assert second.headers["x-greenway-input-tokens"] == "2"
+    # On a hit the header reports the CURRENT request's prompt size (tiktoken
+    # estimate of the paraphrase), not the stored entry's count ("2" was the
+    # first request's provider-reported usage, which encoded the old behavior).
+    assert second.headers["x-greenway-input-tokens"] == "9"
     assert second.headers["x-greenway-output-tokens"] == "2"
     assert backend.backend_calls == 1
     assert telemetry[-2]["cache_tier"] == "miss"
